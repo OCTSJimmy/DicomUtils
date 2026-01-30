@@ -26,6 +26,52 @@ data class OriginDicomData(
     var srcPath: String? = null,
     var isSkipAllDW: Boolean = false
 ) {
+
+    fun toCsvLine():String {
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+        val stringBuilder = StringBuilder()
+        stringBuilder.append("\"$patientName\",")
+        stringBuilder.append("\"$patientId\",")
+        stringBuilder.append("\"$vSubjectCode\",")
+        stringBuilder.append("\"$vSiteCode\",")
+        stringBuilder.append("\"$studyId\",")
+        stringBuilder.append("\"$patientSex\",")
+        stringBuilder.append("\"$patientAge\",")
+        stringBuilder.append("\"$patientWeight\",")
+        if (patientBirthDate != null) {
+            stringBuilder.append("\"${sdf.format(patientBirthDate)}\",")
+        } else {
+            stringBuilder.append("\"\",")
+        }
+        stringBuilder.append("\"$studyDesc\",")
+        stringBuilder.append("\"$deviceSerialNumber\",")
+        if (studyDate != null) {
+            stringBuilder.append("\"${sdf.format(studyDate)}\",")
+        } else {
+            stringBuilder.append("\"\",")
+        }
+        if (seriesDate != null) {
+            stringBuilder.append("\"${sdf.format(seriesDate)}\",")
+        } else {
+            stringBuilder.append("\"\",")
+        }
+        if (acquisitionDate != null) {
+            stringBuilder.append("\"${sdf.format(acquisitionDate)}\",")
+        } else {
+            stringBuilder.append("\"\",")
+        }
+        if (contentDate != null) {
+            stringBuilder.append("\"${sdf.format(contentDate)}\",")
+        } else {
+            stringBuilder.append("\"\",")
+        }
+        stringBuilder.append("\"$manufacturer\",")
+        stringBuilder.append("\"$manufacturerModelName\",")
+
+        stringBuilder.append("\"$srcPath\"")
+        return stringBuilder.toString()
+    }
+
     @Suppress("DuplicatedCode")
     fun writeData(writer: Writer) {
         val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")

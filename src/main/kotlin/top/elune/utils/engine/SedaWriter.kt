@@ -1,12 +1,38 @@
 package top.elune.utils.engine
 
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import top.elune.utils.commons.SedaContext
+import top.elune.utils.dicom.OriginDicomData
 import top.elune.utils.utils.LogUtils
 import java.io.File
 import java.io.FileOutputStream
 
 class SedaWriter(private val ctx: SedaContext) {
+    // 在 SedaWriter 中补充审计写入逻辑
+    private val auditLogChannel = Channel<OriginDicomData>(2000)
+
+    private fun startAuditLogger() {
+        ctx.engineScope.launch(Dispatchers.IO) {
+            // 打开 SAS 盘上的 CSV 文件流
+            val auditFile = File(ctx.config.logPath, "mapping_audit_${System.currentTimeMillis()}.csv")
+            auditFile.bufferedWriter().use { writer ->
+                // 写入 CSV 表头
+                writer.write("OriginPath,PatientID,DesID,StudyDate,...\n")
+                for (data in auditLogChannel) {
+                    // 将 OriginDicomData 序列化为 CSV 行
+                    writer.write("${data.toCsvLine()}\n")
+                }
+            }
+        }
+    }
+
+    // 在 saveAuditLog 中调用
+    private suspend fun saveAuditLog(result: ProcessedResult) {
+        result.originDicomData?.let {
+            auditLogChannel.send(it)
+        }
+    }
 
     fun start() {
         // 启动主分发协程，消费 Processor 产出的成品
@@ -78,14 +104,5 @@ class SedaWriter(private val ctx: SedaContext) {
             LogUtils.errNoPrint("【写入失败-$label】目标: ${targetFile.absolutePath}, 原因: ${e.message}")
             false
         }
-    }
-
-    /**
-     * 将 OriginDicomData 持久化到审计日志 (例如 SAS 盘的 CSV 或 JSON)
-     */
-    private fun saveAuditLog(result: ProcessedResult) {
-        val auditData = result.originDicomData ?: return
-        // 这里可以调用您现有的 LogUtils 或专门的 AuditWriter
-        // 建议：此处可以采用异步追加写入，避免阻塞主写入逻辑
     }
 }

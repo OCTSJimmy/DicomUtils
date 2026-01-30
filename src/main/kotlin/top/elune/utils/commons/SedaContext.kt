@@ -4,13 +4,13 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import top.elune.utils.engine.DicomTask
 import top.elune.utils.engine.ProcessedResult
+import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 class SedaContext(val config: SedaConfig) : AutoCloseable {
     val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val stats = SedaStats()
-
     // --- 待完成任务监控 (内存管道积压) ---
     val scanQueuePending = AtomicInteger(0)  // Processor 待处理数
     val writeQueuePending = AtomicInteger(0) // Writer 待处理数
