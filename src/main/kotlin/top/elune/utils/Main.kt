@@ -100,7 +100,7 @@ private fun logNoDebugPrint(
 ) {
     LogUtils.debugNoPrint(
         "Success copy %s, from:%n     %s%n  -> %s%n",
-        codeModule.originSubjectCode,
+        codeModule.originSubjectNumber,
         srcSubjectPath.toFile().absolutePath,
         dstSubjectPath.toFile().absolutePath
     )
@@ -152,11 +152,11 @@ private fun fileLoopCore(subjectPathStr: String, writer: Writer, writeIgnore: Wr
         var dstStr = ""
         val replaceRegex = Settings.ORIGIN_SUBJECT_DIR_REPLACE_TO_RELEASE_SUBJECT_DIR_REGEX_STR.replace(
             "@originSubjectCode",
-            codeModule.originSubjectCode
+            codeModule.originSubjectNumber
         ).toRegex()
         val replaceDst = Settings.ORIGIN_SUBJECT_DIR_REPLACE_TO_RELEASE_SUBJECT_DIR_DST_STR.replace(
             "@desensitizedSubjectCode",
-            codeModule.desensitizedSubjectCode
+            codeModule.desensitizedSubjectNumber
         )
         dstStr = srcStr.replace(replaceRegex, replaceDst)
         var dstStr2: String = dstStr
@@ -211,7 +211,7 @@ private fun fileLoopCore(subjectPathStr: String, writer: Writer, writeIgnore: Wr
             dstFile,
             dstFile2,
             originSubjectCode,
-            codeModule.desensitizedSubjectCode
+            codeModule.desensitizedSubjectNumber
         )
         if (null == originDicomData) {
             writer.append(String.format("%n"))
@@ -279,7 +279,7 @@ private fun logErrorPrint(
 ) {
     LogUtils.err(
         "Failure copy %s, from:%n     %s%n  -> %s%n",
-        codeModule.originSubjectCode,
+        codeModule.originSubjectNumber,
         srcSubjectPath.toFile().absolutePath,
         dstSubjectPath.toFile().absolutePath
     )

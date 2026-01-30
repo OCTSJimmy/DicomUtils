@@ -17,8 +17,8 @@ enum class CodeManager {
     private val mDesensitizedCodeModuleMap = HashMap<String, CodeModule>()
     fun put(codeModule: CodeModule) {
         try {
-            mOriginCodeModuleMap[codeModule.originSubjectCode] = codeModule
-            mDesensitizedCodeModuleMap[codeModule.desensitizedSubjectCode] = codeModule
+            mOriginCodeModuleMap[codeModule.originSubjectNumber] = codeModule
+            mDesensitizedCodeModuleMap[codeModule.desensitizedSubjectNumber] = codeModule
         } catch (ignored: Exception) {
         }
     }
@@ -73,9 +73,9 @@ enum class CodeManager {
                     if (contentArr.size < 2) continue
                     val codeModule = CodeModule(
 //                        subjectNumber = contentArr[1].trim { it <= ' ' },
-                        mSubjectNumber = contentArr[0].trim { it <= ' ' },
+                        mSubjectCode = contentArr[0].trim { it <= ' ' },
 //                        vSubjectNumber = contentArr[4].trim { it <= ' ' },
-                        mvSubjectNumber = contentArr[1].trim { it <= ' ' }
+                        mvSubjectCode = contentArr[1].trim { it <= ' ' }
                     )
                     INSTANCE.put(codeModule)
                 }

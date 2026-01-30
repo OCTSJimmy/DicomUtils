@@ -1,11 +1,16 @@
 package top.elune.utils.engine
 
 import kotlinx.coroutines.*
+import org.dcm4che3.data.Attributes
+import org.dcm4che3.data.Tag
+import org.dcm4che3.data.VR
 import org.dcm4che3.io.DicomInputStream
 import org.dcm4che3.io.DicomOutputStream
 import top.elune.utils.commons.*
+import top.elune.utils.dicom.OriginDicomData
+import top.elune.utils.utils.LogUtils
 import java.io.ByteArrayOutputStream
-import java.io.File
+import java.io.IOException
 
 class SedaProcessor(private val ctx: SedaContext) {
 
@@ -22,60 +27,125 @@ class SedaProcessor(private val ctx: SedaContext) {
         for (task in ctx.taskChannel) {
             try {
                 val result = doTransform(task)
-                // 此处 send 到 writeChannel 会触发背压
                 ctx.writeChannel.send(result)
             } catch (e: Exception) {
-                // 读取或脱敏失败的情况，记录错误任务
-                ctx.writeChannel.send(ProcessedResult(
-                    originFile = task.originFile,
-                    targetRelativePath = task.targetRelativePath,
-                    codeModule = task.codeModule,
-                    data = null,
-                    isSuccess = false,
-                    errorMsg = e.message
-                ))
+                // 失败分支：确保字段名 isSuccess 与 ProcessedResult.kt 一致
+                ctx.writeChannel.send(
+                    ProcessedResult(
+                        originFile = task.originFile,
+                        targetRelativePath = task.targetRelativePath,
+                        codeModule = task.codeModule,
+                        data = null,
+                        isSuccess = false,
+                        errorMsg = e.message
+                    )
+                )
+                // 统计失败文件数
+                ctx.stats.fileError.incrementAndGet()
             }
         }
     }
 
     private fun doTransform(task: DicomTask): ProcessedResult {
-        // 1. 读取文件到内存 (IO 操作)
-        val attrs = DicomInputStream(task.originFile).use { dis ->
-            dis.readDataset(-1, -1)
+        var attrs: Attributes
+        var fmi: Attributes? = null
+
+        DicomInputStream(task.originFile).use { dis ->
+            attrs = dis.readDataset(-1, -1)
+            fmi = dis.fileMetaInformation
         }
 
-        // 2. 执行脱敏替换 (CPU 操作)
-        // 直接使用 Task 带来的 codeModule，无需再去查找
-        val vCode = task.codeModule.desensitizedSubjectCode
+        val desensitizedSubjectCode = task.codeModule.desensitizedSubjectCode
+        val originDicomData: OriginDicomData? = extractOriginData(attrs, desensitizedSubjectCode, task)
 
-        attrs.apply {
-            setString(org.dcm4che3.data.Tag.PatientName, org.dcm4che3.data.VR.PN, vCode)
-            setString(org.dcm4che3.data.Tag.PatientID, org.dcm4che3.data.VR.LO, vCode)
+        // --- 步骤 2: 执行脱敏替换 ---
+        applyDesid(attrs, desensitizedSubjectCode, task)
 
-            // 隐私清除（优先级 1）
-            setNull(org.dcm4che3.data.Tag.InstitutionName, org.dcm4che3.data.VR.LO)
-            setNull(org.dcm4che3.data.Tag.PatientBirthDate, org.dcm4che3.data.VR.DA)
-            // ... 其他 Tag 的清除逻辑 ...
-        }
-
-        // 3. 特殊序列处理：如果是 DW 序列，可能需要额外的合规化处理（如特殊标记）
-        if (task.isDW) {
-            // 执行针对 DW 序列的额外清洗
-        }
-
-        // 4. 序列化为二进制流 (ByteArray)
+        // --- 步骤 3: 序列化 ---
         val baos = ByteArrayOutputStream()
-        DicomOutputStream(baos).use { dos ->
-            dos.writeDataset(attrs.metaInfo, attrs)
+        val tsuid = fmi?.getString(Tag.TransferSyntaxUID) ?: "1.2.840.10008.1.2.1"
+        DicomOutputStream(baos, tsuid).use { dos ->
+            dos.writeDataset(fmi, attrs)
         }
 
-        ctx.totalProcessed.incrementAndGet()
-
+        ctx.stats.fileProcessed.incrementAndGet()
         return ProcessedResult(
-            originFile = task.originFile,
-            targetRelativePath = task.targetRelativePath,
-            codeModule = task.codeModule,
-            data = baos.toByteArray()
+            task.originFile,
+            task.targetRelativePath,
+            task.codeModule,
+            baos.toByteArray(),
+            originDicomData,
+            true
         )
+    }
+
+    private fun applyDesid(
+        attrs: Attributes,
+        desensitizedSubjectCode: String,
+        task: DicomTask
+    ) {
+        try {
+            // 确保 MediaStorageSOPClassUID 合规
+            val mediaStorageSOPClassUID = attrs.getString(Tag.MediaStorageSOPClassUID)
+            if (mediaStorageSOPClassUID.isNullOrBlank()) {
+                attrs.setString(Tag.MediaStorageSOPClassUID, VR.UI, attrs.getString(Tag.SOPClassUID))
+            }
+
+            // 核心身份替换
+            attrs.setString(Tag.PatientName, VR.PN, desensitizedSubjectCode)
+            attrs.setString(Tag.PatientID, VR.LO, desensitizedSubjectCode)
+
+            // 隐私清空 (严格遵守提供的逻辑)
+            attrs.setNull(Tag.InstitutionName, VR.LO)
+            attrs.setNull(Tag.PatientSex, VR.CS)
+            attrs.setNull(Tag.PatientAge, VR.AS)
+            attrs.setNull(Tag.PatientWeight, VR.DS)
+            attrs.setNull(Tag.PatientBirthDate, VR.DA)
+            attrs.setNull(Tag.StudyDescription, VR.LO)
+            attrs.setNull(Tag.DeviceSerialNumber, VR.LO)
+            // 时间/日期清空
+            val dateTags = intArrayOf(Tag.StudyDate, Tag.SeriesDate, Tag.AcquisitionDate, Tag.ContentDate)
+            dateTags.forEach { attrs.setNull(it, VR.DA) }
+            val timeTags = intArrayOf(Tag.StudyTime, Tag.SeriesTime, Tag.AcquisitionTime, Tag.ContentTime)
+            timeTags.forEach { attrs.setNull(it, VR.TM) }
+
+        } catch (e: Exception) {
+            LogUtils.err("Replace ${task.originFile.absolutePath} Tag Error: ${e.message}")
+            throw e // 抛出异常由 processorWorker 统一处理成错误任务
+        }
+    }
+
+    private fun extractOriginData(
+        attrs: Attributes,
+        desensitizedSubjectCode: String,
+        task: DicomTask
+    ): OriginDicomData? {
+        var originDicomData: OriginDicomData? = null
+
+        // --- 步骤 1: 提取原始数据并持久化保存 (留底) ---
+        try {
+            originDicomData = OriginDicomData(
+                attrs.getString(Tag.PatientName),
+                attrs.getString(Tag.PatientID),
+                attrs.getString(Tag.InstitutionName),
+                desensitizedSubjectCode,
+                attrs.getString(Tag.StudyID),
+                attrs.getString(Tag.PatientSex),
+                attrs.getString(Tag.PatientAge),
+                attrs.getString(Tag.PatientWeight),
+                attrs.getDate(Tag.PatientBirthDate),
+                attrs.getString(Tag.StudyDescription),
+                attrs.getString(Tag.DeviceSerialNumber),
+                attrs.getDate(Tag.StudyDate),
+                attrs.getDate(Tag.SeriesDate),
+                attrs.getDate(Tag.AcquisitionDate),
+                attrs.getDate(Tag.ContentDate),
+                attrs.getString(Tag.Manufacturer, ""),
+                attrs.getString(Tag.ManufacturerModelName, "")
+            )
+        } catch (e: Exception) {
+            LogUtils.err("Read ${task.originFile.absolutePath} DICOM tag Error: ${e.message}")
+        }
+        return originDicomData
     }
 }

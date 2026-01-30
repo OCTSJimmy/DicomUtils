@@ -2,26 +2,36 @@ package top.elune.utils.commons
 
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import top.elune.utils.engine.DicomTask
+import top.elune.utils.engine.ProcessedResult
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicInteger
 
-/**
- * SEDA 运行环境：持有调度器和生命周期
- */
 class SedaContext(val config: SedaConfig) : AutoCloseable {
-    // 1. 引擎主作用域：负责管理所有阶段（Stage）的协程
     val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-
-    // 2. 隔离调度器：专门用于 NTFS，防止其 IO 阻塞影响其他任务
-    val ntfsDispatcher = Executors.newFixedThreadPool(config.ntfsWriterParallelism)
-        .asCoroutineDispatcher()
-    // 在 SedaContext 类定义中增加：
-    val taskChannel = Channel<DicomTask>(config.scanQueueSize)
-    val writeChannel = Channel<ProcessedResult>(config.processQueueSize) // 后续处理完的结果
-
-    val totalScanned = AtomicLong(0)
     val stats = SedaStats()
-    // 4. 资源回收
+
+    // --- 待完成任务监控 (内存管道积压) ---
+    val scanQueuePending = AtomicInteger(0)  // Processor 待处理数
+    val writeQueuePending = AtomicInteger(0) // Writer 待处理数
+
+    /**
+     * 待完成任务数量 (内存中活跃的任务总数)
+     */
+    val totalPendingInFlight: Int
+        get() = scanQueuePending.get() + writeQueuePending.get()
+
+    /**
+     * 待完成总数 (全局视野：已发现 - 已结束)
+     */
+    val globalRemaining: Long
+        get() = stats.fileScanned.get() - (stats.fileSuccess.get() + stats.fileError.get() + stats.fileIgnored.get())
+
+    // 调度器与管道
+    val ntfsDispatcher = Executors.newFixedThreadPool(config.ntfsWriterParallelism).asCoroutineDispatcher()
+    val taskChannel = Channel<DicomTask>(config.scanQueueSize)
+    val writeChannel = Channel<ProcessedResult>(config.processQueueSize)
+
     override fun close() {
         engineScope.cancel()
         (ntfsDispatcher.executor as java.util.concurrent.ExecutorService).shutdown()

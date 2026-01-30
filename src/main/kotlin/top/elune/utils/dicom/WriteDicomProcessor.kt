@@ -26,10 +26,10 @@ class WriteDicomProcessor {
             try {
                 Files.walkFileTree(srcRootPath, object : SimpleFileVisitor<Path>() {
                     override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
-                        if (! dir.isReadable()) return FileVisitResult.CONTINUE
+                        if (!dir.isReadable()) return FileVisitResult.CONTINUE
                         return if (Context.isRunning) {
                             val srcStr = dir.toFile().absolutePath
-                            //                        chance2_200_6314
+                            // chance2_200_6314
                             if (srcStr.matches(Settings.SUBJECT_DIR_VALID_REGEX)) {
                                 LogUtils.infoNoPrint("Current: %s", srcStr)
                             } else if (srcStr.matches(Settings.DICOM_DW_DIR_VALID_REGEX)) {
@@ -51,7 +51,7 @@ class WriteDicomProcessor {
                     }
 
                     override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
-                        if (! file.isReadable()) return FileVisitResult.CONTINUE
+                        if (!file.isReadable()) return FileVisitResult.CONTINUE
                         if (dicomActionFunction != null) {
                             try {
                                 val dicomActionResult = dicomActionFunction.apply(file.toFile())
@@ -89,7 +89,7 @@ class WriteDicomProcessor {
                     }
 
                     override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
-                        if (dir.isReadable().not() ) return super.postVisitDirectory(dir, exc)
+                        if (dir.isReadable().not()) return super.postVisitDirectory(dir, exc)
                         val srcStr = dir.toFile().absolutePath
                         if (srcStr.matches(Settings.SUBJECT_DIR_VALID_REGEX)) {
                             val subjectCode = srcStr.replace(

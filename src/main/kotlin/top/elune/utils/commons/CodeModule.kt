@@ -3,15 +3,17 @@ package top.elune.utils.commons
 /**
  * 初始化CodeM对象
  *
- * @param mSubjectCode 原始受试者编号
- * @param mvSubjectCode 脱敏受试者编号
+ * @param mSubjectNumber 原始受试者编号
+ * @param mvSubjectNumber 脱敏受试者编号
  *
  */
 open class CodeModule(
-    var mSubjectNumber: String,
-    private var mSubjectCode: String? = String.format(mSubjectNumber),
-    var mvSubjectNumber: String?,
-    private var mvSubjectCode: String? = String.format("$mvSubjectNumber"),
+    private var mSiteCode: String,
+    private var mSubjectCode: String,
+    private var mSubjectNumber: String? = String.format("%s-%s", mSiteCode, mSubjectCode),
+    private var mvSiteCode: String,
+    private var mvSubjectCode: String?,
+    private var mvSubjectNumber: String? = String.format("%s-%s", mvSiteCode, mvSubjectCode),
     private var mIsDone: Boolean = false,
 ) : Cloneable {
     var name: String? = null
@@ -24,8 +26,20 @@ open class CodeModule(
         return mIsDone
     }
 
+    val originSubjectNumber: String
+        get() = mSubjectNumber ?: ""
+
+    val desensitizedSubjectNumber: String
+        get() = mvSubjectNumber ?: ""
+
+    val originSiteCode: String
+        get() = mSiteCode
+
     val originSubjectCode: String
-        get() = mSubjectCode ?: ""
+        get() = mSubjectCode
+
+    val desensitizedSiteCode: String
+        get() = mvSiteCode
 
     val desensitizedSubjectCode: String
         get() = mvSubjectCode ?: ""
