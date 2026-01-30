@@ -7,22 +7,22 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class SedaStats {
     // === 进程/线程类信息 ===
-    val fileScanned = AtomicLong(0)    // 已发现数量 (Scanner 扫到的物理文件总数)
-    val tasksDelivered = AtomicLong(0) // 已投递任务数量 (进入脱敏管道的任务数)
-    val fileProcessed = AtomicLong(0)  // 已处理数量 (CPU 脱敏完成)
+// === 进程/线程/任务类信息 ===
+    val fileScanned = AtomicLong(0)    // 已发现数量 (Scanner 扫到的所有文件)
+    val tasksDelivered = AtomicLong(0) // 已投递任务数量 (进入管道的任务)
+    val fileProcessed = AtomicLong(0)  // 已脱敏处理完成数量
+    val fileSuccess = AtomicLong(0)    // 已成功任务数量 (主路落地)
+    val fileError = AtomicLong(0)      // 已失败任务数量 (主路失败或处理错误)
 
     // === 受试者类信息 ===
-    val subjectSuccess = AtomicLong(0) // 成功完成受试者数 (Scanner 识别成功)
-    val subjectIgnored = AtomicLong(0) // 忽略受试者数 (无字典或路径不合规)
-    val subjectError = AtomicLong(0)   // 失败受试者数 (预留，用于严重目录错误)
+    val subjectSuccess = AtomicLong(0) // 成功完成受试者数 (识别并开始处理)
+    val subjectIgnored = AtomicLong(0) // 忽略受试者数 (无字典)
+    val subjectError = AtomicLong(0)   // 失败受试者数 (如受试者目录无法读取)
 
-    // === 文件类信息 ===
-    val fileSuccess = AtomicLong(0)    // 主路 (NTFS) 成功数量
-    val fileError = AtomicLong(0)      // 主路 (NTFS) 失败数量
-    val fileIgnored = AtomicLong(0)    // 已忽略数量 (非影像、跳过文件)
-
-    val backupSuccess = AtomicLong(0)  // 副路 (NFS) 成功数量
-    val backupError = AtomicLong(0)    // 副路 (NFS) 失败数量
+    // === 文件类信息补充 ===
+    val fileIgnored = AtomicLong(0)    // 已忽略文件数量 (非影像、正则排除)
+    val backupSuccess = AtomicLong(0)  // 副路成功
+    val backupError = AtomicLong(0)    // 副路失败
 
     /**
      * 待完成总数 = 已发现 - (成功 + 失败 + 忽略)

@@ -46,37 +46,33 @@ class SedaProcessor(private val ctx: SedaContext) {
         }
     }
 
+    // SedaProcessor.kt doTransform 逻辑
     private fun doTransform(task: DicomTask): ProcessedResult {
-        var attrs: Attributes
-        var fmi: Attributes? = null
+        // 领用任务，减少积压计数
+        ctx.scanQueuePending.decrementAndGet() //
 
         DicomInputStream(task.originFile).use { dis ->
-            attrs = dis.readDataset(-1, -1)
-            fmi = dis.fileMetaInformation
+            val attrs = dis.readDataset(-1, -1)
+
+            // --- 多帧影像检测 ---
+            val frames = attrs.getInt(Tag.NumberOfFrames, 1)
+            if (frames > 1) {
+                LogUtils.debugNoPrint("检测到多帧影像 ($frames 帧): ${task.originFile.name}")
+            }
+
+            val desensitizedSubjectCode = task.codeModule.desensitizedSubjectCode
+            applyDesid(attrs, desensitizedSubjectCode, task)
+
+            val baos = ByteArrayOutputStream()
+            val tsuid = dis.fileMetaInformation?.getString(Tag.TransferSyntaxUID) ?: "1.2.840.10008.1.2.1"
+            DicomOutputStream(baos, tsuid).use { it.writeDataset(dis.fileMetaInformation, attrs) }
+
+            // 处理完成，投递到写入管道前
+            ctx.writeQueuePending.incrementAndGet() //
+            ctx.stats.fileProcessed.incrementAndGet()
+
+            return ProcessedResult(task.originFile, task.targetRelativePath, task.codeModule, baos.toByteArray(), extractOriginData(attrs, desensitizedSubjectCode, task), true)
         }
-
-        val desensitizedSubjectCode = task.codeModule.desensitizedSubjectCode
-        val originDicomData: OriginDicomData? = extractOriginData(attrs, desensitizedSubjectCode, task)
-
-        // --- 步骤 2: 执行脱敏替换 ---
-        applyDesid(attrs, desensitizedSubjectCode, task)
-
-        // --- 步骤 3: 序列化 ---
-        val baos = ByteArrayOutputStream()
-        val tsuid = fmi?.getString(Tag.TransferSyntaxUID) ?: "1.2.840.10008.1.2.1"
-        DicomOutputStream(baos, tsuid).use { dos ->
-            dos.writeDataset(fmi, attrs)
-        }
-
-        ctx.stats.fileProcessed.incrementAndGet()
-        return ProcessedResult(
-            task.originFile,
-            task.targetRelativePath,
-            task.codeModule,
-            baos.toByteArray(),
-            originDicomData,
-            true
-        )
     }
 
     private fun applyDesid(

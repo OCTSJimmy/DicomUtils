@@ -43,10 +43,10 @@ class SedaWriter(private val ctx: SedaContext) {
 
     private suspend fun writerDispatcherLoop() {
         for (result in ctx.writeChannel) {
+            ctx.writeQueuePending.decrementAndGet() // 离开积压队列
+
             if (!result.isSuccess) {
-                // 处理阶段就失败的任务，直接计入主路错误
-                ctx.stats.fileError.incrementAndGet()
-                LogUtils.errNoPrint("【审计-跳过写入】源文件处理失败: ${result.originFile.absolutePath}, 原因: ${result.errorMsg}")
+                ctx.stats.fileError.incrementAndGet() // 处理环节报错的文件
                 continue
             }
 
@@ -55,8 +55,8 @@ class SedaWriter(private val ctx: SedaContext) {
                 // 1. 第一路：主路 NTFS (严格限流模式)
                 val ntfsJob = launch(ctx.ntfsDispatcher) {
                     val ok = writeToFile(result, ctx.config.ntfsOutputPath, "NTFS")
-                    if (ok) ctx.stats.fileSuccess.incrementAndGet()
-                    else ctx.stats.fileError.incrementAndGet()
+                    if (ok) ctx.stats.fileSuccess.incrementAndGet() // 主路：成功
+                    else ctx.stats.fileError.incrementAndGet()       // 主路：失败
 
                     // 主路成功后，可以在此处触发审计日志写入 SAS 盘逻辑
                     if (ok) saveAuditLog(result)

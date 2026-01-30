@@ -69,32 +69,32 @@ class SedaScanner(private val ctx: SedaContext) {
         }
     }
 
+    // SedaScanner.kt 核心埋点逻辑
     private suspend fun inspectAndDispatch(file: File) {
         val path = file.absolutePath
+        ctx.stats.fileScanned.incrementAndGet() // 已发现
 
-        // 1. 提取受试者编号 (保留路径边界校验逻辑)
-        val originCode = path.replace(
-            Settings.ORIGIN_SUBJECT_CODE_REPLACE_REGEX,
-            Settings.ORIGIN_SUBJECT_CODE_REPLACE_DST
-        )
-
-        // 2. 匹配字典
+        val originCode = path.replace(Settings.ORIGIN_SUBJECT_CODE_REPLACE_REGEX, Settings.ORIGIN_SUBJECT_CODE_REPLACE_DST)
         val codeModule = CodeManager.INSTANCE[originCode]
+
         if (codeModule == null) {
-            LogUtils.errNoPrint("【受试者编号未匹配】受试者编号[$originCode]未在字典中找到。路径: $path")
-            ctx.stats.subjectIgnored.incrementAndGet()
-            ctx.stats.fileIgnored.incrementAndGet()
+            ctx.stats.subjectIgnored.incrementAndGet() // 受试者类：忽略
+            ctx.stats.fileIgnored.incrementAndGet()    // 文件类：忽略
             return
         }
-        // 4. 判定 DW 序列合规性
+
+        // 统计：成功识别并开始处理一个受试者 (仅在第一次识别到该 ID 时或简化处理)
+        // 注意：此处为简化逻辑，每发现一个属于该受试者的文件都可能触发，
+        // 若需去重，建议在 start() 中识别到 SubjectDir 匹配时增加 subjectSuccess。
+
+        val targetRelPath = calculateRelPath(path, codeModule)
         val isDW = path.matches(Settings.DICOM_DW_DIR_VALID_REGEX)
 
-        // 3. 预计算目标路径 (与 1.0 逻辑对齐)
-        val targetRelPath = calculateRelPath(path, codeModule)
+        // 投递前计数
+        ctx.stats.tasksDelivered.incrementAndGet() // 已投递
+        ctx.scanQueuePending.incrementAndGet()      // 内存积压+1
 
-        // 5. 下发任务包
         ctx.taskChannel.send(DicomTask(file, codeModule, targetRelPath, isDW))
-        ctx.stats.fileScanned.incrementAndGet()
     }
 
     private fun isProjectRelevantDir(path: String): Boolean {
