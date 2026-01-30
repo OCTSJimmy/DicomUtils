@@ -272,6 +272,10 @@ object LogUtils {
     fun err(format: String, vararg content: Any?) {
         err(format, true, *content)
     }
+    @JvmStatic
+    fun errNoPrint(format: String, vararg content: Any?) {
+        err(format, false, *content)
+    }
 
     @JvmStatic
     fun release() {
