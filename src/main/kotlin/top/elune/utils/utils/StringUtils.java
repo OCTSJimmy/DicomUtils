@@ -43,6 +43,7 @@ public class StringUtils {
      * @param str2 字符串2
      * @return 相似度，0 - 100
      */
+    @SuppressWarnings("unused")
     public static int similarRates(String str1, String str2) {
         if (Objects.equals(str1, str2)) {
             return 100;

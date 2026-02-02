@@ -7,6 +7,7 @@ package top.elune.utils.commons
  * @param mvSubjectNumber 脱敏受试者编号
  *
  */
+@Suppress("unused")
 open class CodeModule(
     private var mSiteCode: String,
     private var mSubjectCode: String,

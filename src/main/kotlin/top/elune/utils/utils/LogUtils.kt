@@ -1,7 +1,7 @@
 package top.elune.utils.utils
 
-import top.elune.utils.commons.Settings
 import org.apache.commons.io.output.WriterOutputStream
+import top.elune.utils.commons.Settings
 import java.io.*
 import java.nio.charset.StandardCharsets
 import java.nio.file.Paths
@@ -9,7 +9,9 @@ import java.text.SimpleDateFormat
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
+import kotlin.system.exitProcess
 
+@Suppress("unused")
 object LogUtils {
     var SDF = SimpleDateFormat("yyyy-MM-dd_HH_mm_ss")
     lateinit var logCurrentPath: File
@@ -99,7 +101,7 @@ object LogUtils {
             sLogDebugBw = BufferedWriter(FileWriter(LOG_DEBUG_FILE))
         } catch (e: IOException) {
             System.err.println("日志文件初始化失败")
-            System.exit(1)
+            exitProcess(1)
         }
         // 启动异步写入守护线程
         if (logDaemonThread == null || !logDaemonThread!!.isAlive) {
@@ -118,17 +120,17 @@ object LogUtils {
                           successFile:Int,
                           failureFile:Int,
                           ignoreFile:Int) {
-        LogUtils.log(
+        log(
             "Current Time: %s",
             SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSSSSSSSS").format(System.currentTimeMillis())
         )
-        LogUtils.log("Running Thread is %s .", runningSize.toString())
-        LogUtils.log("Done/Cancel Thread is %s .", doneSize.toString())
-        LogUtils.log("Done Subjects is %d .", doneSubject)
-        LogUtils.log("Ignore Subjects is %d .", ignoreSubject)
-        LogUtils.log("Success $actionStr file is %d .", successFile)
-        LogUtils.log("Failure $actionStr file is %d .", failureFile)
-        LogUtils.log("Ignore $actionStr file is %d .%n", ignoreFile)
+        log("Running Thread is %s .", runningSize.toString())
+        log("Done/Cancel Thread is %s .", doneSize.toString())
+        log("Done Subjects is %d .", doneSubject)
+        log("Ignore Subjects is %d .", ignoreSubject)
+        log("Success $actionStr file is %d .", successFile)
+        log("Failure $actionStr file is %d .", failureFile)
+        log("Ignore $actionStr file is %d .%n", ignoreFile)
     }
 
     fun createLogs(vararg dirs: String?): File {

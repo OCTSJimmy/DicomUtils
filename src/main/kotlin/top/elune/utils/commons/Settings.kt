@@ -1,12 +1,11 @@
 package top.elune.utils.commons
 
 import java.io.BufferedReader
-import java.io.FileDescriptor
 import java.io.FileInputStream
-import java.io.FileReader
 import java.io.InputStreamReader
 import java.nio.charset.Charset
 import java.util.*
+
 
 class Settings {
     companion object {
@@ -45,7 +44,7 @@ class Settings {
          *
          */
         @JvmStatic
-        var SUBJECT_DIR_VALID_REGEX: Regex = "^.*/[0-9]{14}_[0-9]{9}_[^/]*\$".toRegex()
+        var SUBJECT_DIR_VALID_REGEX: Regex = """^.*/[0-9]{14}_[0-9]{9}_[^/]*$""".toRegex()
 
         /**
          * 影像文件DW层目录
@@ -54,7 +53,7 @@ class Settings {
          *
          */
         @JvmStatic
-        var DICOM_DW_DIR_VALID_REGEX = "^.*/[0-9]{14}_[0-9]{9}_[^/]*/.*\$".toRegex()
+        var DICOM_DW_DIR_VALID_REGEX = """^.*/[0-9]{14}_[0-9]{9}_[^/]*/.*$""".toRegex()
 
         /**
          * 影像文件路径
@@ -63,7 +62,7 @@ class Settings {
          *
          */
         @JvmStatic
-        var DICOM_OTHER_DIRS_VALID_REGEX = "^.*/[0-9]{14}_[0-9]{9}_.*?(/.*)+\$".toRegex()
+        var DICOM_OTHER_DIRS_VALID_REGEX = """^.*/[0-9]{14}_[0-9]{9}_.*?(/.*)+$""".toRegex()
 
         /**
          * 影像文件路径截取替换为受试者目录路径
@@ -74,7 +73,7 @@ class Settings {
          * R:\Images-DICOM\Origin\001\A01001
          */
         @JvmStatic
-        var ORIGIN_SUBJECT_CODE_PATH_REPLACE_REGEX = "^(.*/[0-9]{14}_[0-9]{9}_[^/]*)/.*\$".toRegex()
+        var ORIGIN_SUBJECT_CODE_PATH_REPLACE_REGEX = """^(.*/[0-9]{14}_[0-9]{9}_[^/]*)/.*$""".toRegex()
 
         /**
          * 影像文件路径截取替换为受试者目录路径
@@ -85,7 +84,7 @@ class Settings {
          * R:\Images-DICOM\Origin\001\A01001
          */
         @JvmStatic
-        var ORIGIN_SUBJECT_CODE_PATH_REPLACE_DST: String = "\$1"
+        var ORIGIN_SUBJECT_CODE_PATH_REPLACE_DST: String = """$1"""
 
         /**
          * 从受试者路径截取受试者编号替换搜索正则
@@ -96,7 +95,7 @@ class Settings {
          * 001-01001
          */
         @JvmStatic
-        var ORIGIN_SUBJECT_CODE_REPLACE_REGEX = "^.*/([0-9]{14})_[0-9]{9}_[^/]*/?.*\$".toRegex()
+        var ORIGIN_SUBJECT_CODE_REPLACE_REGEX = """^.*/([0-9]{14})_[0-9]{9}_[^/]*/?.*$""".toRegex()
 
         /**
          * 从受试者路径截取受试者编号替换目标
@@ -106,7 +105,7 @@ class Settings {
          * 001-01001
          */
         @JvmStatic
-        var ORIGIN_SUBJECT_CODE_REPLACE_DST: String = "\$1"
+        var ORIGIN_SUBJECT_CODE_REPLACE_DST: String = """$1"""
 
         /**
          * 替换原受试者路径中经验证合规的受试者这一级目录名称到目标名称，
@@ -185,6 +184,7 @@ class Settings {
 
             } catch (e: Exception) {
                 System.err.println("Load settings.properties Error.")
+                e.printStackTrace()
             } finally {
                 reader?.close()
             }

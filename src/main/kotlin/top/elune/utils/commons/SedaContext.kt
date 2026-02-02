@@ -4,10 +4,10 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import top.elune.utils.engine.DicomTask
 import top.elune.utils.engine.ProcessedResult
-import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
+@Suppress("unused")
 class SedaContext(val config: SedaConfig) : AutoCloseable {
     // 调度器与管道
     val ntfsDispatcher = Executors.newFixedThreadPool(config.ntfsWriterParallelism).asCoroutineDispatcher()

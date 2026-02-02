@@ -1,24 +1,15 @@
 package top.elune.utils
 
-import top.elune.utils.commons.*
-import top.elune.utils.dicom.WriteDicomProcessor
+import top.elune.utils.commons.CodeManager
+import top.elune.utils.commons.SedaConfig
+import top.elune.utils.commons.SedaContext
+import top.elune.utils.commons.Settings
 import top.elune.utils.engine.SedaEngine
 import top.elune.utils.utils.LogUtils
-import java.io.*
-import java.nio.charset.StandardCharsets
-import java.nio.file.*
-import java.nio.file.attribute.BasicFileAttributes
 import java.util.*
-import java.util.function.Function
-import kotlin.io.path.Path
-import kotlin.io.path.exists
-import kotlin.io.path.isDirectory
-import kotlin.io.path.name
 
 
-private val sWriterIgnoreLocker: Any = Any()
-
-fun main(args: Array<String>) {
+fun main(@Suppress("unused") args: Array<String>) {
     Locale.setDefault(Locale.ENGLISH)
     Settings.init()
     LogUtils.init(Settings.LOG_PATH)

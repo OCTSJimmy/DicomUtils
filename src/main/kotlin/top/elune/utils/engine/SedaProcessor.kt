@@ -1,16 +1,16 @@
 package top.elune.utils.engine
 
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.dcm4che3.data.Attributes
 import org.dcm4che3.data.Tag
 import org.dcm4che3.data.VR
-import org.dcm4che3.io.DicomInputStream
-import org.dcm4che3.io.DicomOutputStream
-import top.elune.utils.commons.*
+import top.elune.utils.commons.SedaContext
+import top.elune.utils.dicom.CustomDicomInputStream
+import top.elune.utils.dicom.CustomDicomOutputStream
 import top.elune.utils.dicom.OriginDicomData
 import top.elune.utils.utils.LogUtils
 import java.io.ByteArrayOutputStream
-import java.io.IOException
 
 class SedaProcessor(private val ctx: SedaContext) {
 
@@ -43,35 +43,6 @@ class SedaProcessor(private val ctx: SedaContext) {
                 // 统计失败文件数
                 ctx.stats.fileError.incrementAndGet()
             }
-        }
-    }
-
-    // SedaProcessor.kt doTransform 逻辑
-    private fun doTransform(task: DicomTask): ProcessedResult {
-        // 领用任务，减少积压计数
-        ctx.scanQueuePending.decrementAndGet() //
-
-        DicomInputStream(task.originFile).use { dis ->
-            val attrs = dis.readDataset(-1, -1)
-
-            // --- 多帧影像检测 ---
-            val frames = attrs.getInt(Tag.NumberOfFrames, 1)
-            if (frames > 1) {
-                LogUtils.debugNoPrint("检测到多帧影像 ($frames 帧): ${task.originFile.name}")
-            }
-
-            val desensitizedSubjectCode = task.codeModule.desensitizedSubjectCode
-            applyDesid(attrs, desensitizedSubjectCode, task)
-
-            val baos = ByteArrayOutputStream()
-            val tsuid = dis.fileMetaInformation?.getString(Tag.TransferSyntaxUID) ?: "1.2.840.10008.1.2.1"
-            DicomOutputStream(baos, tsuid).use { it.writeDataset(dis.fileMetaInformation, attrs) }
-
-            // 处理完成，投递到写入管道前
-            ctx.writeQueuePending.incrementAndGet() //
-            ctx.stats.fileProcessed.incrementAndGet()
-
-            return ProcessedResult(task.originFile, task.targetRelativePath, task.codeModule, baos.toByteArray(), extractOriginData(attrs, desensitizedSubjectCode, task), true)
         }
     }
 
@@ -111,9 +82,40 @@ class SedaProcessor(private val ctx: SedaContext) {
         }
     }
 
+    // SedaProcessor.kt doTransform 逻辑
+    private fun doTransform(task: DicomTask): ProcessedResult {
+        // 领用任务，减少积压计数
+        ctx.scanQueuePending.decrementAndGet() //
+
+        CustomDicomInputStream(task.originFile).use { dis ->
+            val attrs = dis.readDataset(-1, -1)
+
+            // --- 多帧影像检测 ---
+            val frames = attrs.getInt(Tag.NumberOfFrames, 1)
+            if (frames > 1) {
+                LogUtils.debugNoPrint("检测到多帧影像 ($frames 帧): ${task.originFile.name}")
+            }
+
+            val desensitizedSubjectCode = task.codeModule.desensitizedSubjectCode
+            applyDesid(attrs, desensitizedSubjectCode, task)
+
+            val baos = ByteArrayOutputStream()
+            val tsuid = dis.fileMetaInformation?.getString(Tag.TransferSyntaxUID) ?: "1.2.840.10008.1.2.1"
+            CustomDicomOutputStream(baos, tsuid).use { it.writeDataset(dis.fileMetaInformation, attrs) }
+
+            // 处理完成，投递到写入管道前
+            ctx.writeQueuePending.incrementAndGet() //
+            ctx.stats.fileProcessed.incrementAndGet()
+
+            return ProcessedResult(
+                task.originFile, task.targetRelativePath, task.codeModule, baos.toByteArray(),
+                extractOriginData(attrs, task), true
+            )
+        }
+    }
+
     private fun extractOriginData(
         attrs: Attributes,
-        desensitizedSubjectCode: String,
         task: DicomTask
     ): OriginDicomData? {
         var originDicomData: OriginDicomData? = null
@@ -123,8 +125,10 @@ class SedaProcessor(private val ctx: SedaContext) {
             originDicomData = OriginDicomData(
                 attrs.getString(Tag.PatientName),
                 attrs.getString(Tag.PatientID),
-                attrs.getString(Tag.InstitutionName),
-                desensitizedSubjectCode,
+                task.codeModule.originSiteCode,
+                task.codeModule.originSubjectNumber,
+                task.codeModule.originSiteCode,
+                task.codeModule.desensitizedSubjectNumber,
                 attrs.getString(Tag.StudyID),
                 attrs.getString(Tag.PatientSex),
                 attrs.getString(Tag.PatientAge),
@@ -137,7 +141,8 @@ class SedaProcessor(private val ctx: SedaContext) {
                 attrs.getDate(Tag.AcquisitionDate),
                 attrs.getDate(Tag.ContentDate),
                 attrs.getString(Tag.Manufacturer, ""),
-                attrs.getString(Tag.ManufacturerModelName, "")
+                attrs.getString(Tag.ManufacturerModelName, ""),
+                task.originFile.absolutePath
             )
         } catch (e: Exception) {
             LogUtils.err("Read ${task.originFile.absolutePath} DICOM tag Error: ${e.message}")

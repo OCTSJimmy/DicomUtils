@@ -7,6 +7,7 @@ import java.io.File
 /**
  * 脱敏后的成品数据包
  */
+@Suppress("unused")
 class ProcessedResult(
     val originFile: File,
     val targetRelativePath: String,

@@ -5,6 +5,7 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * 2.0 分层统计指标：支持进程流、受试者与文件三维监控
  */
+@Suppress("unused")
 class SedaStats {
     // === 进程/线程类信息 ===
 // === 进程/线程/任务类信息 ===

@@ -1,7 +1,5 @@
 package top.elune.utils.commons
 
-import java.io.File
-
 /**
  * 2.0 核心配置：定义物理边界
  */

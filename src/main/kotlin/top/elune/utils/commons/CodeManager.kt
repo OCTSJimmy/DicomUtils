@@ -1,15 +1,15 @@
 package top.elune.utils.commons
 
-import cn.org.ncrcnd.bigdata.ct_genai.dicom.selector.utils.LogUtils
+import top.elune.utils.utils.LogUtils
 import java.io.*
 import java.nio.charset.Charset
 import java.nio.charset.UnsupportedCharsetException
-import kotlin.collections.get
-import kotlin.collections.iterator
+import kotlin.system.exitProcess
 
 /**
  * 原始中心编码,原始受试者编码,生成随机编码,脱敏中心编码,脱敏受试者编码
  */
+@Suppress("unused")
 enum class CodeManager {
     INSTANCE;
 
@@ -27,7 +27,7 @@ enum class CodeManager {
         return mOriginCodeModuleMap[originSubjectCode]
     }
 
-    fun getByDesensitizedCode(desensitizedCode: String?): CodeModule? {
+    open fun getByDesensitizedCode(desensitizedCode: String?): CodeModule? {
         return mDesensitizedCodeModuleMap[desensitizedCode]
     }
 
@@ -61,7 +61,8 @@ enum class CodeManager {
             val csvFile = File(csvPaths)
             var br: BufferedReader? = null
             try {
-                br = BufferedReader(InputStreamReader(FileInputStream(csvFile), Charset.forName("UTF-8")))
+                br = BufferedReader(InputStreamReader(FileInputStream(csvFile), 
+                    Charset.forName("UTF-8")))
                 var line: String? = null
                 var isFirst = false
                 while (null != br.readLine().also { line = it }) {
@@ -70,23 +71,26 @@ enum class CodeManager {
                         continue
                     }
                     val contentArr = line!!.split(",").toTypedArray()
-                    if (contentArr.size < 2) continue
+                    if (contentArr.size < 4) continue
                     val codeModule = CodeModule(
-//                        subjectNumber = contentArr[1].trim { it <= ' ' },
-                        mSubjectCode = contentArr[0].trim { it <= ' ' },
-//                        vSubjectNumber = contentArr[4].trim { it <= ' ' },
-                        mvSubjectCode = contentArr[1].trim { it <= ' ' }
+                        mSiteCode = contentArr[0].trim { it <= ' ' },
+                        mSubjectCode = contentArr[1].trim { it <= ' ' },
+                        mvSiteCode = contentArr[2].trim { it <= ' ' },
+                        mvSubjectCode = contentArr[3].trim { it <= ' ' }
                     )
+                    if (contentArr.size > 4) {
+                        codeModule.name = contentArr[4].trim { it <= ' ' }
+                    }
                     INSTANCE.put(codeModule)
                 }
                 LogUtils.debugNoPrint("CSV加载结束")
             } catch (e: UnsupportedCharsetException) {
-                LogUtils.err("不支持UTF-8编码")
-                System.exit(1)
+                LogUtils.err("系统不支持UTF-8编码")
+                exitProcess(1)
             } catch (e: Exception) {
                 LogUtils.err("读取CSV文件失败")
                 LogUtils.err(e)
-                System.exit(1)
+                exitProcess(1)
             } finally {
                 if (br != null) {
                     try {

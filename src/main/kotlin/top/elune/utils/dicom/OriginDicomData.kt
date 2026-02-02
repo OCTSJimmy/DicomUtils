@@ -7,9 +7,10 @@ import java.util.*
 data class OriginDicomData(
     val patientName: String? = null,
     val patientId: String?  = null,
-    val vSubjectCode: String?  = null,
+    val originSiteCode: String? = null,
+    val originSubjectNumber: String? = null,
     val vSiteCode: String?  = null,
-
+    val vSubjectCode: String?  = null,
     val studyId: String?  = null,
     val patientSex: String?  = null,
     val patientAge: String?  = null,
@@ -72,7 +73,7 @@ data class OriginDicomData(
         return stringBuilder.toString()
     }
 
-    @Suppress("DuplicatedCode")
+    @Suppress("unused")
     fun writeData(writer: Writer) {
         val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
         writer.append("\"$patientName\",")

@@ -5,12 +5,13 @@ import java.io.File
 import java.io.IOException
 import java.io.OutputStream
 
+@Suppress("unused")
 class CustomDicomOutputStream : DicomOutputStream {
     var isClosed = false
         private set
 
-    constructor(out: OutputStream?, tsuid: String?) : super(out, tsuid) {}
-    constructor(file: File?) : super(file) {}
+    constructor(out: OutputStream?, tsuid: String?) : super(out, tsuid)
+    constructor(file: File?) : super(file)
 
     @Throws(IOException::class)
     override fun close() {

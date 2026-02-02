@@ -88,8 +88,10 @@ class SedaWriter(private val ctx: SedaContext) {
      */
     private fun writeToFile(result: ProcessedResult, baseRoot: String, label: String): Boolean {
         val data = result.data ?: return false
-        val targetFile = File(baseRoot, result.targetRelativePath)
-
+        var targetFile = File(baseRoot, result.targetRelativePath)
+        if (!targetFile.endsWith(".dcm")) {
+            targetFile = File(targetFile.parentFile, "${targetFile.name}.dcm")
+        }
         return try {
             // 自动创建脱敏后的层级目录
             if (!targetFile.parentFile.exists()) {
@@ -100,10 +102,10 @@ class SedaWriter(private val ctx: SedaContext) {
                 fos.write(data)
                 fos.flush()
             }
-            LogUtils.debugNoPrint("【写入成功-$label】: ${targetFile.absolutePath}")
+            LogUtils.debugNoPrint("【写入成功-$label】: ${result.originFile.absolutePath}%n ->  ${targetFile.absolutePath}")
             true
         } catch (e: Exception) {
-            LogUtils.errNoPrint("【写入失败-$label】目标: ${targetFile.absolutePath}, 原因: ${e.message}")
+            LogUtils.errNoPrint("【写入失败-$label】目标: ${result.originFile.absolutePath}%n -> ${targetFile.absolutePath}, 原因: ${e.message}")
             false
         }
     }
