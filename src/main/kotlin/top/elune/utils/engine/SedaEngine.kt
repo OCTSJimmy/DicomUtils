@@ -48,15 +48,24 @@ class SedaEngine(private val ctx: SedaContext) {
     private fun printFinalStats(timeConsumed: Long) {
         val s = ctx.stats
         LogUtils.info("""
-            ================================================
-            脱敏任务完成！总耗时: ${timeConsumed / 1000}s
-            ------------------------------------------------
-            
-            ------------------------------------------------
-            【主路文件(NTFS)】: 成功: ${s.fileSuccess} | 错误: ${s.fileError}
-            【备份路(NFS)】: 成功: ${s.backupSuccess} | 错误: ${s.backupError}
-            【统计】: 扫描: ${s.fileScanned} | 脱敏: ${s.fileProcessed} | 忽略: ${s.fileIgnored}
-            ================================================
-        """.trimIndent())
+        ================================================
+        脱敏任务完成！总耗时: ${timeConsumed / 1000}s
+        ------------------------------------------------
+        【任务流监控】
+        - 已发现数量: ${s.fileScanned}
+        - 已投递任务: ${s.tasksDelivered}
+        - 待完成总数: ${s.remainingTotal}
+        ------------------------------------------------
+        【受试者类】
+        - 成功完成: ${s.subjectSuccess}
+        - 忽略数量: ${s.subjectIgnored}
+        - 错误数量: ${s.subjectError}
+        ------------------------------------------------
+        【文件处理类】
+        - 主路成功: ${s.fileSuccess}
+        - 主路失败: ${s.fileError}
+        - 已忽略数: ${s.fileIgnored}
+        ================================================
+    """.trimIndent())
     }
 }

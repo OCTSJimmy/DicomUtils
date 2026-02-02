@@ -12,6 +12,14 @@ class SedaWriter(private val ctx: SedaContext) {
     // 在 SedaWriter 中补充审计写入逻辑
     private val auditLogChannel = Channel<OriginDicomData>(2000)
 
+    fun start() {
+        // 启动主分发协程，消费 Processor 产出的成品
+        startAuditLogger()
+        ctx.engineScope.launch {
+            writerDispatcherLoop()
+        }
+    }
+
     private fun startAuditLogger() {
         ctx.engineScope.launch(Dispatchers.IO) {
             // 打开 SAS 盘上的 CSV 文件流
@@ -34,12 +42,6 @@ class SedaWriter(private val ctx: SedaContext) {
         }
     }
 
-    fun start() {
-        // 启动主分发协程，消费 Processor 产出的成品
-        ctx.engineScope.launch {
-            writerDispatcherLoop()
-        }
-    }
 
     private suspend fun writerDispatcherLoop() {
         for (result in ctx.writeChannel) {
