@@ -52,19 +52,19 @@ class SedaEngine(private val ctx: SedaContext) {
         脱敏任务完成！总耗时: ${timeConsumed / 1000}s
         ------------------------------------------------
         【任务流监控】
-        - 已发现数量: ${s.fileScanned}
-        - 已投递任务: ${s.tasksDelivered}
+        - 已发现数量: ${s.fileScanned.get()}
+        - 已投递任务: ${s.tasksDelivered.get()}
         - 待完成总数: ${s.remainingTotal}
         ------------------------------------------------
         【受试者类】
-        - 成功完成: ${s.subjectSuccess}
-        - 忽略数量: ${s.subjectIgnored}
-        - 错误数量: ${s.subjectError}
+        - 成功完成: ${s.subjectSuccess.get()}
+        - 忽略数量: ${s.subjectIgnored.get()}
+        - 错误数量: ${s.subjectError.get()}
         ------------------------------------------------
         【文件处理类】
-        - 主路成功: ${s.fileSuccess}
-        - 主路失败: ${s.fileError}
-        - 已忽略数: ${s.fileIgnored}
+        - 主路成功: ${s.fileSuccess.get()}
+        - 主路失败: ${s.fileError.get()}
+        - 已忽略数: ${s.fileIgnored.get()}
         ================================================
     """.trimIndent())
     }

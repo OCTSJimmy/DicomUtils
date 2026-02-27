@@ -1,7 +1,7 @@
 package top.elune.utils.engine
 
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import top.elune.utils.commons.CodeManager
 import top.elune.utils.commons.CodeModule
@@ -9,63 +9,83 @@ import top.elune.utils.commons.SedaContext
 import top.elune.utils.commons.Settings
 import top.elune.utils.utils.LogUtils
 import java.io.File
-import java.util.*
+import java.nio.file.Files
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 class SedaScanner(private val ctx: SedaContext) {
 
     private val rootDir = File(ctx.config.inputPath)
+    // 新增：用于受试者去重的并发 Set
+    private val trackedSubjects = ConcurrentHashMap.newKeySet<String>()
 
     fun start() = ctx.engineScope.launch(Dispatchers.IO) {
-        val queue: Deque<File> = ArrayDeque()
-        queue.add(rootDir)
+        // ==========================================
+        // 【优化 2】多工位并发队列：替代单线程的 ArrayDeque
+        // ==========================================
+        val dirQueue = Channel<File>(Channel.UNLIMITED)
+        dirQueue.send(rootDir)
 
-        try {
-            while (queue.isNotEmpty() && isActive) {
-                val currentFolder = queue.poll() ?: continue
+        // 任务追踪器：记录 (队列中 + 正在处理) 的目录总数
+        val activeTasks = AtomicInteger(1)
 
-                // 解决 Windows FileSystemException
-                val children = currentFolder.listFiles()
-                if (children == null) {
-                    LogUtils.errNoPrint("【扫描跳过】目录无法读取或无权限: ${currentFolder.absolutePath}")
-                    continue
-                }
-
-                for (child in children) {
-                    val path = child.absolutePath
-                    if (child.isDirectory) {
-                        // 目录判定
-                        if (isProjectRelevantDir(path)) {
-                            queue.add(child)
+        // 开启 16 个并发游侠去扫目录 (完美掩盖 SMB/网络盘的延迟)
+        val scannerParallelism = 16
+        repeat(scannerParallelism) { workerId ->
+            launch {
+                for (currentFolder in dirQueue) {
+                    try {
+                        // ==========================================
+                        // 【优化 3】NIO 迭代器：替代缓慢且吃内存的 listFiles()
+                        // ==========================================
+                        Files.newDirectoryStream(currentFolder.toPath()).use { stream ->
+                            for (path in stream) {
+                                val child = path.toFile()
+                                if (child.isDirectory) {
+                                    if (isProjectRelevantDir(child.absolutePath)) {
+                                        activeTasks.incrementAndGet() // 发现新目录，任务总数 +1
+                                        dirQueue.send(child)
+                                    }
+                                } else {
+                                    if (checkIllegalFile(child.absolutePath)) continue
+                                    inspectAndDispatch(child)
+                                }
+                            }
                         }
-                    } else {
-                        // 文件判定：排除非法后缀
-                        if (checkIllegalFile(path)) continue
-                        // 执行分发逻辑
-                        inspectAndDispatch(child)
+                    } catch (e: Exception) {
+                        LogUtils.errNoPrint("【扫描跳过】目录无法读取或无权限: ${currentFolder.absolutePath}")
+                    } finally {
+                        // 无论当前目录有没有子文件，处理完了就宣告当前任务结束
+                        if (activeTasks.decrementAndGet() == 0) {
+                            dirQueue.close() // 所有目录都扫完了，关闭通道，协程池自然下班
+                        }
                     }
                 }
             }
-        } finally {
-            ctx.taskChannel.close()
-            LogUtils.info("Scanner 扫描阶段结束，总计下发任务: ${ctx.stats.fileScanned.get()}")
         }
+
+        // 挂起等待，直到 dirQueue 被 close，这意味着扫描彻底结束
+        // 虽然 Scanner 结束了，但我们要把收尾的日志打出来，并通知下游
+        ctx.taskChannel.close()
+        LogUtils.info("Scanner 扫描阶段结束，总计下发任务: ${ctx.stats.fileScanned.get()}")
     }
 
     private fun checkIllegalFile(srcStr: String): Boolean {
-        return if (srcStr.matches("^.*\\.nii.gz$".toRegex(RegexOption.IGNORE_CASE))) {
-            LogUtils.err(IllegalArgumentException("File $srcStr is NIFITI"))
-            true
-        } else if (srcStr.matches("^.*\\.json$".toRegex(RegexOption.IGNORE_CASE))) {
-            LogUtils.err(IllegalArgumentException("File $srcStr is JSON"))
-            true
-        } else if (srcStr.matches("^.*\\.jpge?$".toRegex(RegexOption.IGNORE_CASE))) {
-            LogUtils.err(IllegalArgumentException("File $srcStr is Picture"))
-            true
-        } else if (srcStr.matches("^.*\\.bmp$".toRegex(RegexOption.IGNORE_CASE))) {
-            LogUtils.err(IllegalArgumentException("File $srcStr is Picture"))
-            true
-        } else {
-            false
+        val lowerStr = srcStr.lowercase()
+        return when {
+            lowerStr.endsWith(".nii.gz") -> {
+                 LogUtils.errNoPrint("File $srcStr is NIFITI")
+                true
+            }
+            lowerStr.endsWith(".json") -> {
+                 LogUtils.errNoPrint("File $srcStr is JSON")
+                true
+            }
+            lowerStr.endsWith(".jpg") || lowerStr.endsWith(".jpeg") || lowerStr.endsWith(".bmp") -> {
+                 LogUtils.errNoPrint("File $srcStr is Picture")
+                true
+            }
+            else -> false
         }
     }
 
@@ -78,14 +98,19 @@ class SedaScanner(private val ctx: SedaContext) {
         val codeModule = CodeManager.INSTANCE[originCode]
 
         if (codeModule == null) {
-            ctx.stats.subjectIgnored.incrementAndGet() // 受试者类：忽略
             ctx.stats.fileIgnored.incrementAndGet()    // 文件类：忽略
+            if (trackedSubjects.add(originCode)) {
+                ctx.stats.subjectIgnored.incrementAndGet()
+            }
             return
         }
 
         // 统计：成功识别并开始处理一个受试者 (仅在第一次识别到该 ID 时或简化处理)
         // 注意：此处为简化逻辑，每发现一个属于该受试者的文件都可能触发，
         // 若需去重，建议在 start() 中识别到 SubjectDir 匹配时增加 subjectSuccess。
+        if (trackedSubjects.add(originCode)) {
+            ctx.stats.subjectSuccess.incrementAndGet()
+        }
 
         val targetRelPath = calculateRelPath(path, codeModule)
         val isDW = path.matches(Settings.DICOM_DW_DIR_VALID_REGEX)

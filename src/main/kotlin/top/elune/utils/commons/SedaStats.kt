@@ -30,7 +30,7 @@ class SedaStats {
      * 代表“已经知道有这个文件，但还没跑完流程”的存量
      */
     val remainingTotal: Long
-        get() = fileScanned.get() - (fileSuccess.get() + fileError.get() + fileIgnored.get())
+        get() = fileScanned.get() - (fileSuccess.get() + fileError.get())
 
     /**
      * 进度百分比 (基于文件成功率)

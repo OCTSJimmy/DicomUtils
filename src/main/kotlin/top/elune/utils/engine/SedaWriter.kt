@@ -57,19 +57,24 @@ class SedaWriter(private val ctx: SedaContext) {
                 // 1. 第一路：主路 NTFS (严格限流模式)
                 val ntfsJob = launch(ctx.ntfsDispatcher) {
                     val ok = writeToFile(result, ctx.config.ntfsOutputPath, "NTFS")
-                    if (ok) ctx.stats.fileSuccess.incrementAndGet() // 主路：成功
-                    else ctx.stats.fileError.incrementAndGet()       // 主路：失败
-
+                    when (ok) {
+                        0 -> ctx.stats.fileError.incrementAndGet()
+                        2 -> ctx.stats.fileIgnored.incrementAndGet()
+                        else -> ctx.stats.fileSuccess.incrementAndGet()
+                    }
                     // 主路成功后，可以在此处触发审计日志写入 SAS 盘逻辑
-                    if (ok) saveAuditLog(result)
+                    if (ok == 1) saveAuditLog(result)
                 }
 
                 // 2. 第二路：副路 NFS (高并发模式)
                 val nfsJob = if (ctx.config.nfsOutputPath != null) {
                     launch(Dispatchers.IO) { // NFS 相对稳健，直接使用 IO 调度器
-                        val ok = writeToFile(result, ctx.config.nfsOutputPath!!, "NFS")
-                        if (ok) ctx.stats.backupSuccess.incrementAndGet()
-                        else ctx.stats.backupError.incrementAndGet()
+                        val ok = writeToFile(result, ctx.config.nfsOutputPath, "NFS")
+                        when(ok) {
+                            0 -> ctx.stats.backupError.incrementAndGet()
+//                            2 -> ctx.stats.backupIgnored.incrementAndGet()
+                            else -> ctx.stats.backupSuccess.incrementAndGet()
+                        }
                     }
                 } else null
 
@@ -86,10 +91,10 @@ class SedaWriter(private val ctx: SedaContext) {
     /**
      * 执行具体的二进制写入操作
      */
-    private fun writeToFile(result: ProcessedResult, baseRoot: String, label: String): Boolean {
-        val data = result.data ?: return false
+    private fun writeToFile(result: ProcessedResult, baseRoot: String, label: String): Int {
+        val data = result.data ?: return 0
         var targetFile = File(baseRoot, result.targetRelativePath)
-        if (!targetFile.endsWith(".dcm")) {
+        if (!targetFile.name.endsWith(".dcm")) {
             targetFile = File(targetFile.parentFile, "${targetFile.name}.dcm")
         }
         return try {
@@ -97,16 +102,22 @@ class SedaWriter(private val ctx: SedaContext) {
             if (!targetFile.parentFile.exists()) {
                 targetFile.parentFile.mkdirs()
             }
-
+            // ==========================================
+            // 【新增逻辑】：幂等性校验，如果文件已存在且大小正常，直接跳过
+            // ==========================================
+            if (targetFile.exists() && targetFile.length() > 0) {
+                LogUtils.debugNoPrint("【文件已存在，跳过-$label】: ${targetFile.absolutePath}")
+                return 2 // 返回 true，让上层统计视为“已成功处理”
+            }
             FileOutputStream(targetFile).use { fos ->
                 fos.write(data)
                 fos.flush()
             }
             LogUtils.debugNoPrint("【写入成功-$label】: ${result.originFile.absolutePath}%n ->  ${targetFile.absolutePath}")
-            true
+            1
         } catch (e: Exception) {
             LogUtils.errNoPrint("【写入失败-$label】目标: ${result.originFile.absolutePath}%n -> ${targetFile.absolutePath}, 原因: ${e.message}")
-            false
+            0
         }
     }
 }
