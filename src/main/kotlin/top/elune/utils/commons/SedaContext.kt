@@ -13,7 +13,8 @@ class SedaContext(val config: SedaConfig) : AutoCloseable {
     val ntfsDispatcher = Executors.newFixedThreadPool(config.ntfsWriterParallelism).asCoroutineDispatcher()
     val taskChannel = Channel<DicomTask>(config.scanQueueSize)
     val writeChannel = Channel<ProcessedResult>(config.processQueueSize)
-
+    val blacklistedDirs = ConcurrentHashMap.newKeySet<String>()
+    
     val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val stats = SedaStats()
 

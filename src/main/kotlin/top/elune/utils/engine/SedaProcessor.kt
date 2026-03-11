@@ -12,6 +12,11 @@ import org.dcm4che3.data.VR
 import java.util.*
 
 class SedaProcessor(private val ctx: SedaContext) {
+    private val seriesCheck3DSaved = """^.*(3D Saved State).*$""".toRegex(RegexOption.IGNORE_CASE)
+    private val seriesCheckBiomind = """^.*biomind.*$""".toRegex(RegexOption.IGNORE_CASE)
+    private val seriesCheckBloodFlow =
+        """^.*(Processed Images|Time To Peak|Blood Flow|Blood Volume|Mean Transit Time).*$""".toRegex(RegexOption.IGNORE_CASE)
+    private val seriesCheckProcessed = """^.*Processed Images.*$""".toRegex()
 
     fun start() {
         // 根据 CPU 核心数启动多个处理协程
@@ -26,7 +31,9 @@ class SedaProcessor(private val ctx: SedaContext) {
         for (task in ctx.taskChannel) {
             try {
                 val result = doTransform(task)
-                ctx.writeChannel.send(result)
+                if(result !+ null ) {
+                   ctx.writeChannel.send(result)
+                }
             } catch (e: Exception) {
                 // 失败分支：确保字段名 isSuccess 与 ProcessedResult.kt 一致
                 ctx.writeChannel.send(
@@ -87,11 +94,24 @@ class SedaProcessor(private val ctx: SedaContext) {
     private fun doTransform(task: DicomTask): ProcessedResult {
         // 领用任务，减少积压计数
         ctx.scanQueuePending.decrementAndGet() //
-
+        val parentPath = task.originFile.parentFile.absolutePath
+        if (ctx.blacklistedDirs.contains(parentPath)) {
+            ctx.stats.fileIgnored.incrementAndGet()
+            return null
+        }
         CustomDicomInputStream(task.originFile).use { dis ->
             // === 修改点 1: 仅读取元数据，遇到 PixelData (7FE0,0010) 即停止 ===
             // 这样 attrs 里只有几十 KB 的文本数据，没有几百 MB 的图像
             val attrs : Attributes = dis.readDatasetUntilPixelData()
+
+            // 3. 【内容审计】判断是否命中黑名单规则
+            if (checkAndSkipSeries(attrs, codeModule, file, parentFileCount)) {
+                LogUtils.infoNoPrint("触发目录屏蔽规则，拉黑目录: $parentPath (触发文件: ${file.name})")
+                blacklistedDirs.add(parentPath) // ⚡ 拉黑整个目录
+                ctx.stats.fileIgnored.incrementAndGet()
+                return
+            }
+
             // --- 多帧影像检测 ---
             val frames = attrs.getInt(Tag.NumberOfFrames, 1)
             if (frames > 1) {
@@ -115,6 +135,43 @@ class SedaProcessor(private val ctx: SedaContext) {
         }
     }
 
+    private fun printSkipInfoMessage(originCode: String?, src: File, seriesDescription: String?) {
+        ctx.stats.fileIgnored.incrementAndGet()
+        LogUtils.debugNoPrint(
+            "Skip %s dicom file at %s, because SeriesDescription is : %s",
+            originCode,
+            src.absolutePath,
+            seriesDescription
+        )
+    }
+
+    fun checkAndSkipSeries(attributes: Attributes, codeModule: CodeModule, src: File, parentFileCount:Int): Boolean {
+
+        val seriesDescription = attributes.getString(Tag.SeriesDescription, "")
+        // Important: Skip (3D Saved State|biomind)
+        if (null != seriesDescription && seriesDescription.matches(seriesCheck3DSaved)) {
+            printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
+            return true
+        }
+        if (null != seriesDescription && seriesDescription.matches(seriesCheckBiomind)) {
+            printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
+            return true
+        }
+
+        if (null != seriesDescription && seriesDescription.matches(seriesCheckBloodFlow)) {
+
+            if (!seriesDescription.matches(seriesCheckProcessed)) {
+                printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
+                return true
+            }
+            if (parentFileCount < 100) {
+                printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
+                return true
+            }
+        }
+        return false
+    }
+    
     private fun extractOriginData(
         attrs: Attributes,
         task: DicomTask

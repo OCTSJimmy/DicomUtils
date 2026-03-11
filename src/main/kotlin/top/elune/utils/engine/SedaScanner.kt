@@ -21,14 +21,7 @@ import java.util.concurrent.ConcurrentHashMap
 class SedaScanner(private val ctx: SedaContext) {
 
     private val rootDir = File(ctx.config.inputPath)
-    private val blacklistedDirs = ConcurrentHashMap.newKeySet<String>()
     private val trackedSubjects = ConcurrentHashMap.newKeySet<String>()
-
-    private val seriesCheck3DSaved = """^.*(3D Saved State).*$""".toRegex(RegexOption.IGNORE_CASE)
-    private val seriesCheckBiomind = """^.*biomind.*$""".toRegex(RegexOption.IGNORE_CASE)
-    private val seriesCheckBloodFlow =
-        """^.*(Processed Images|Time To Peak|Blood Flow|Blood Volume|Mean Transit Time).*$""".toRegex(RegexOption.IGNORE_CASE)
-    private val seriesCheckProcessed = """^.*Processed Images.*$""".toRegex()
     private val dicomParserDispatcher = Dispatchers.IO.limitedParallelism(8)
 
     fun start() = ctx.engineScope.launch(Dispatchers.IO) {
@@ -84,9 +77,7 @@ class SedaScanner(private val ctx: SedaContext) {
                         // 文件判定：排除非法后缀
                         if (isIllegalFile) continue
                         // 执行分发逻辑
-                        launch(dicomParserDispatcher) {
-                            inspectAndDispatch(child, children.size)
-                        }
+                        inspectAndDispatch(child, children.size)
                     }
                 }
             }
@@ -125,7 +116,7 @@ class SedaScanner(private val ctx: SedaContext) {
             Settings.ORIGIN_SUBJECT_CODE_REPLACE_REGEX, Settings.ORIGIN_SUBJECT_CODE_REPLACE_DST
         )
         // 1. 【快速失败】如果父目录已被拉黑，直接跳过 (不需要 IO)
-        if (blacklistedDirs.contains(parentPath)) {
+        if (ctx.blacklistedDirs.contains(parentPath)) {
             ctx.stats.fileIgnored.incrementAndGet()
             LogUtils.debugNoPrint("Skip this file at %s with Black List Dirs.", file.absolutePath)
             if (trackedSubjects.add(originCode)) {
@@ -143,29 +134,11 @@ class SedaScanner(private val ctx: SedaContext) {
         }
 
         val relPath = calculateRelPath(file.absolutePath, codeModule)
-
-        // 2. 【预读取 Header】
-        // 这一步虽然有 IO，但为了过滤是必须的。且我们用 Task 把它传下去，不算浪费。
-        val attributes = try {
-            readHeaderEfficiently(file)
-        } catch (e: Exception) {
-            LogUtils.errNoPrint("Header读取失败: ${file.name}, because with %n ${e.message}")
-            ctx.stats.fileError.incrementAndGet()
-            return
-        }
-
-        // 3. 【内容审计】判断是否命中黑名单规则
-        if (checkAndSkipSeries(attributes, codeModule, file, parentFileCount)) {
-            LogUtils.infoNoPrint("触发目录屏蔽规则，拉黑目录: $parentPath (触发文件: ${file.name})")
-            blacklistedDirs.add(parentPath) // ⚡ 拉黑整个目录
-            ctx.stats.fileIgnored.incrementAndGet()
-            return
-        }
-
         val isDW = file.absolutePath.matches(Settings.DICOM_DW_DIR_VALID_REGEX)
         if (trackedSubjects.add(originCode)) {
             ctx.stats.subjectSuccess.incrementAndGet()
         }
+
         // 投递前计数
         ctx.stats.tasksDelivered.incrementAndGet() // 已投递
         ctx.scanQueuePending.incrementAndGet()      // 内存积压+1
@@ -173,16 +146,7 @@ class SedaScanner(private val ctx: SedaContext) {
         // 这里的 attributes 只有几 KB，完全可以放在内存里流转
         ctx.taskChannel.send(DicomTask(file, codeModule, relPath, isDW, attributes))
         ctx.stats.fileScanned.incrementAndGet()
-    }
 
-    /**
-     * 高效读取 Header (只读到 PixelData 为止)
-     */
-    private fun readHeaderEfficiently(file: File): Attributes {
-        DicomInputStream(file).use { dis ->
-            // 不读大对象，遇到 PixelData 立即停止
-            return dis.readDatasetUntilPixelData()
-        }
     }
 
     private fun isProjectRelevantDir(path: String): Boolean {
@@ -214,42 +178,6 @@ class SedaScanner(private val ctx: SedaContext) {
         }
     }
 
-    private fun printSkipInfoMessage(originCode: String?, src: File, seriesDescription: String?) {
-        ctx.stats.fileIgnored.incrementAndGet()
-        LogUtils.debugNoPrint(
-            "Skip %s dicom file at %s, because SeriesDescription is : %s",
-            originCode,
-            src.absolutePath,
-            seriesDescription
-        )
-    }
-
-    fun checkAndSkipSeries(attributes: Attributes, codeModule: CodeModule, src: File, parentFileCount:Int): Boolean {
-
-        val seriesDescription = attributes.getString(Tag.SeriesDescription, "")
-        // Important: Skip (3D Saved State|biomind)
-        if (null != seriesDescription && seriesDescription.matches(seriesCheck3DSaved)) {
-            printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
-            return true
-        }
-        if (null != seriesDescription && seriesDescription.matches(seriesCheckBiomind)) {
-            printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
-            return true
-        }
-
-        if (null != seriesDescription && seriesDescription.matches(seriesCheckBloodFlow)) {
-
-            if (!seriesDescription.matches(seriesCheckProcessed)) {
-                printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
-                return true
-            }
-            if (parentFileCount < 100) {
-                printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
-                return true
-            }
-        }
-        return false
-    }
 
     /**
      * 实现与 1.0 对齐的路径替换逻辑，并支持 CodeModule 中的多字段占位符
