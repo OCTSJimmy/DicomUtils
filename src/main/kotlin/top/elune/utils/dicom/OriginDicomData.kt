@@ -7,9 +7,7 @@ import java.util.*
 data class OriginDicomData(
     val patientName: String? = null,
     val patientId: String?  = null,
-    val originSiteCode: String? = null,
     val originSubjectNumber: String? = null,
-    val vSiteCode: String?  = null,
     val vSubjectCode: String?  = null,
     val studyId: String?  = null,
     val patientSex: String?  = null,
@@ -34,7 +32,6 @@ data class OriginDicomData(
         stringBuilder.append("\"$patientName\",")
         stringBuilder.append("\"$patientId\",")
         stringBuilder.append("\"$vSubjectCode\",")
-        stringBuilder.append("\"$vSiteCode\",")
         stringBuilder.append("\"$studyId\",")
         stringBuilder.append("\"$patientSex\",")
         stringBuilder.append("\"$patientAge\",")
@@ -79,7 +76,6 @@ data class OriginDicomData(
         writer.append("\"$patientName\",")
         writer.append("\"$patientId\",")
         writer.append("\"$vSubjectCode\",")
-        writer.append("\"$vSiteCode\",")
         writer.append("\"$studyId\",")
         writer.append("\"$patientSex\",")
         writer.append("\"$patientAge\",")

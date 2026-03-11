@@ -1,22 +1,33 @@
 package top.elune.utils.engine
 
-import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
 import top.elune.utils.commons.SedaContext
+import top.elune.utils.dicom.CustomDicomInputStream
+import top.elune.utils.dicom.CustomDicomOutputStream
 import top.elune.utils.dicom.OriginDicomData
 import top.elune.utils.utils.LogUtils
-import java.io.File
-import java.io.FileOutputStream
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
+import java.io.*
 
 class SedaWriter(private val ctx: SedaContext) {
     // 在 SedaWriter 中补充审计写入逻辑
     private val auditLogChannel = Channel<OriginDicomData>(2000)
 
+
     fun start() {
         // 启动主分发协程，消费 Processor 产出的成品
         startAuditLogger()
-        ctx.engineScope.launch {
-            writerDispatcherLoop()
+        // ==========================================
+        // 【修正 1】：启动多工位并发池 (Worker Pool)
+        // 这里的并发度决定了同时有多少个文件在进行双路对齐写入
+        // ==========================================
+        val workerCount = ctx.config.ntfsWriterParallelism
+        LogUtils.info("SedaWriter: 启动 $workerCount 个写入并发器...")
+        repeat(workerCount) { workerId ->
+            ctx.engineScope.launch(ctx.ntfsDispatcher) {
+                writerDispatcherLoop(workerId)
+            }
         }
     }
 
@@ -43,81 +54,194 @@ class SedaWriter(private val ctx: SedaContext) {
     }
 
 
-    private suspend fun writerDispatcherLoop() {
+    // 在 SedaWriter 类中重写分发器
+    private suspend fun writerDispatcherLoop(workerId: Int) {
         for (result in ctx.writeChannel) {
-            ctx.writeQueuePending.decrementAndGet() // 离开积压队列
-
+            ctx.writeQueuePending.decrementAndGet()
             if (!result.isSuccess) {
-                ctx.stats.fileError.incrementAndGet() // 处理环节报错的文件
+                ctx.stats.fileError.incrementAndGet()
                 continue
             }
 
-            // 使用 coroutineScope 确保两路异步任务在本轮循环中被追踪
-            coroutineScope {
-                // 1. 第一路：主路 NTFS (严格限流模式)
-                val ntfsJob = launch(ctx.ntfsDispatcher) {
-                    val ok = writeToFile(result, ctx.config.ntfsOutputPath, "NTFS")
-                    when (ok) {
-                        0 -> ctx.stats.fileError.incrementAndGet()
-                        2 -> ctx.stats.fileIgnored.incrementAndGet()
-                        else -> ctx.stats.fileSuccess.incrementAndGet()
+            try {
+                // 执行一次“三通管”双写
+                val (ntfsStatus, nfsStatus) = writeToDualTarget(result)
+
+                // 统一统计主路
+                when (ntfsStatus) {
+                    0 -> ctx.stats.fileError.incrementAndGet()
+                    2 -> ctx.stats.fileIgnored.incrementAndGet()
+                    1 -> {
+                        ctx.stats.fileSuccess.incrementAndGet()
+                        saveAuditLog(result)
                     }
-                    // 主路成功后，可以在此处触发审计日志写入 SAS 盘逻辑
-                    if (ok == 1) saveAuditLog(result)
                 }
 
-                // 2. 第二路：副路 NFS (高并发模式)
-                val nfsJob = if (ctx.config.nfsOutputPath != null) {
-                    launch(Dispatchers.IO) { // NFS 相对稳健，直接使用 IO 调度器
-                        val ok = writeToFile(result, ctx.config.nfsOutputPath, "NFS")
-                        when(ok) {
-                            0 -> ctx.stats.backupError.incrementAndGet()
-//                            2 -> ctx.stats.backupIgnored.incrementAndGet()
-                            else -> ctx.stats.backupSuccess.incrementAndGet()
-                        }
+                // 统一统计辅路
+                if (ctx.config.nfsOutputPath != null) {
+                    when (nfsStatus) {
+                        0 -> ctx.stats.backupError.incrementAndGet()
+                        1 -> ctx.stats.backupSuccess.incrementAndGet()
                     }
-                } else null
-
-                // 3. 等待所有开启的写入任务完成
-                joinAll(*listOfNotNull(ntfsJob, nfsJob).toTypedArray())
+                }
+            } finally {
+                result.cleanup()
             }
-
-            // 4. 【内存释放哨兵】：两路均确认写完，释放 ByteArray 占用的内存
-            result.cleanup()
         }
-        LogUtils.info("SedaWriter: 管道关闭，所有文件写入尝试结束。")
     }
 
     /**
-     * 执行具体的二进制写入操作
+     * 终极流式双写：一读两写，绝不缓存，绝不嵌套
+     * 返回值：Pair<主路状态, 辅路状态> (0:失败, 1:成功, 2:跳过, -1:未开启)
      */
-    private fun writeToFile(result: ProcessedResult, baseRoot: String, label: String): Int {
-        val data = result.data ?: return 0
-        var targetFile = File(baseRoot, result.targetRelativePath)
-        if (!targetFile.name.endsWith(".dcm")) {
-            targetFile = File(targetFile.parentFile, "${targetFile.name}.dcm")
+    private fun writeToDualTarget(result: ProcessedResult): Pair<Int, Int> {
+        val bufferSize = 256 * 1024
+
+        // 1. 路径和幂等性准备
+        val ntfsFile = resolveTargetFile(ctx.config.ntfsOutputPath, result.targetRelativePath)
+        val nfsFile = ctx.config.nfsOutputPath?.let { resolveTargetFile(it, result.targetRelativePath) }
+
+        var ntfsStatus = checkIdempotency(ntfsFile) // 返回 2 表示存在，0 表示需要写
+        var nfsStatus = nfsFile?.let { checkIdempotency(it) } ?: -1
+
+        // 如果两路都不需要写（要么已存在，要么未配置），直接短路返回
+        if (ntfsStatus != 0 && (nfsStatus != 0)) {
+            return Pair(ntfsStatus, nfsStatus)
         }
-        return try {
-            // 自动创建脱敏后的层级目录
-            if (!targetFile.parentFile.exists()) {
-                targetFile.parentFile.mkdirs()
-            }
+
+        try {
             // ==========================================
-            // 【新增逻辑】：幂等性校验，如果文件已存在且大小正常，直接跳过
+            // 【黑科技 1：构造链消除嵌套】
+            // 一行代码打开 源文件 -> 大缓冲 -> Dicom流，只需要一个 use！
             // ==========================================
-            if (targetFile.exists() && targetFile.length() > 0) {
-                LogUtils.debugNoPrint("【文件已存在，跳过-$label】: ${targetFile.absolutePath}")
-                return 2 // 返回 true，让上层统计视为“已成功处理”
+            CustomDicomInputStream(BufferedInputStream(FileInputStream(result.originFile), bufferSize)).use { dis ->
+
+                val fmi = dis.readFileMetaInformation()
+                dis.readDatasetUntilPixelData()
+                val tsuid = fmi?.getString(org.dcm4che3.data.Tag.TransferSyntaxUID) ?: "1.2.840.10008.1.2.1"
+
+                // 2. 准备物理输出流 (谁需要写，就打开谁)
+                val outNtfs =
+                    if (ntfsStatus == 0) BufferedOutputStream(java.io.FileOutputStream(ntfsFile), bufferSize) else null
+                val outNfs =
+                    if (nfsStatus == 0) BufferedOutputStream(java.io.FileOutputStream(nfsFile!!), bufferSize) else null
+
+                // ==========================================
+                // 【黑科技 2：三通管双路写】
+                // 把两个流塞进三通管，包装成唯一的输出流
+                // ==========================================
+                DualOutputStream(outNtfs, outNfs).use { dualOut ->
+                    val dos = CustomDicomOutputStream(dualOut, tsuid)
+
+                    dos.writeDataset(fmi, result.attributes)
+                    dos.flush()
+
+                    // 只读一次源盘！
+                    // 数据会自动在 DualOutputStream 内部被劈成两份，流向 NTFS 和 NFS
+                    dis.copyTo(dos)
+
+                    // 写完后检查两路有没有发生局部异常
+                    if (ntfsStatus == 0) ntfsStatus = if (dualOut.mainError == null) 1 else 0
+                    if (nfsStatus == 0) nfsStatus = if (dualOut.subError == null) 1 else 0
+                }
             }
-            FileOutputStream(targetFile).use { fos ->
-                fos.write(data)
-                fos.flush()
-            }
-            LogUtils.debugNoPrint("【写入成功-$label】: ${result.originFile.absolutePath}%n ->  ${targetFile.absolutePath}")
-            1
         } catch (e: Exception) {
-            LogUtils.errNoPrint("【写入失败-$label】目标: ${result.originFile.absolutePath}%n -> ${targetFile.absolutePath}, 原因: ${e.message}")
-            0
+            // 全局灾难异常（比如源盘断开了），正在写的那路全部判定为失败，并删残片
+            LogUtils.errNoPrint("【双写整体异常】源: ${result.originFile.absolutePath}, 原因: ${e.message}")
+            if (ntfsStatus == 0) {
+                ntfsFile.delete(); ntfsStatus = 0
+            }
+            if (nfsStatus == 0) {
+                nfsFile!!.delete(); nfsStatus = 0
+            }
         }
+
+        return Pair(ntfsStatus, nfsStatus)
+    }
+
+    // --- 辅助方法抽离，代码更干净 ---
+    private fun resolveTargetFile(base: String, relPath: String): File {
+        var f = File(base, relPath)
+        if (!f.name.endsWith(".dcm", ignoreCase = true)) f = File(f.parentFile, "${f.name}.dcm")
+        if (!f.parentFile.exists()) f.parentFile.mkdirs()
+        return f
+    }
+
+    private fun checkIdempotency(f: File): Int {
+        return if (f.exists() && f.length() > 0) 2 else 0
+    }
+}
+
+
+/**
+ * 流式广播器 (三通管)：一次 write，双路落盘
+ */
+class DualOutputStream(
+    private val mainOut: OutputStream?,
+    private val subOut: OutputStream?
+) : OutputStream() {
+    var mainError: Exception? = null
+    var subError: Exception? = null
+
+    override fun write(b: Int) {
+        if (mainOut != null && mainError == null) try {
+            mainOut.write(b)
+        } catch (e: Exception) {
+            mainError = e
+        }
+        if (subOut != null && subError == null) try {
+            subOut.write(b)
+        } catch (e: Exception) {
+            subError = e
+        }
+        checkAllDead()
+    }
+
+    override fun write(b: ByteArray, off: Int, len: Int) {
+        // 核心：一份数据，同时写给两路
+        if (mainOut != null && mainError == null) try {
+            mainOut.write(b, off, len)
+        } catch (e: Exception) {
+            mainError = e
+        }
+        if (subOut != null && subError == null) try {
+            subOut.write(b, off, len)
+        } catch (e: Exception) {
+            subError = e
+        }
+        checkAllDead()
+    }
+
+    override fun flush() {
+        if (mainOut != null && mainError == null) try {
+            mainOut.flush()
+        } catch (e: Exception) {
+            mainError = e
+        }
+        if (subOut != null && subError == null) try {
+            subOut.flush()
+        } catch (e: Exception) {
+            subError = e
+        }
+    }
+
+    override fun close() {
+        // 安全关闭两路，互不影响
+        try {
+            mainOut?.close()
+        } catch (e: Exception) {
+            mainError = e
+        }
+        try {
+            subOut?.close()
+        } catch (e: Exception) {
+            subError = e
+        }
+    }
+
+    private fun checkAllDead() {
+        val mainDead = mainOut == null || mainError != null
+        val subDead = subOut == null || subError != null
+        if (mainDead && subDead) throw IOException("双路输出均已断开或异常")
     }
 }

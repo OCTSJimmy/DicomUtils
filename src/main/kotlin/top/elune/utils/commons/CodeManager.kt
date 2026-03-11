@@ -17,7 +17,7 @@ enum class CodeManager {
     private val mDesensitizedCodeModuleMap = HashMap<String, CodeModule>()
     fun put(codeModule: CodeModule) {
         try {
-            mOriginCodeModuleMap[codeModule.originSubjectNumber] = codeModule
+            mOriginCodeModuleMap[codeModule.originSubjectCode] = codeModule
             mDesensitizedCodeModuleMap[codeModule.desensitizedSubjectNumber] = codeModule
         } catch (ignored: Exception) {
         }
@@ -71,16 +71,11 @@ enum class CodeManager {
                         continue
                     }
                     val contentArr = line!!.split(",").toTypedArray()
-                    if (contentArr.size < 4) continue
+                    if (contentArr.size < 2) continue
                     val codeModule = CodeModule(
-                        mSiteCode = contentArr[0].trim { it <= ' ' },
-                        mSubjectCode = contentArr[1].trim { it <= ' ' },
-                        mvSiteCode = contentArr[2].trim { it <= ' ' },
-                        mvSubjectCode = contentArr[3].trim { it <= ' ' }
+                        mSubjectCode = contentArr[0].trim { it <= ' ' },
+                        mvSubjectCode = contentArr[1].trim { it <= ' ' }
                     )
-                    if (contentArr.size > 4) {
-                        codeModule.name = contentArr[4].trim { it <= ' ' }
-                    }
                     INSTANCE.put(codeModule)
                 }
                 LogUtils.debugNoPrint("CSV加载结束")

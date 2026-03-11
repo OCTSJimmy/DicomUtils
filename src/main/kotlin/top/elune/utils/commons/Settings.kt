@@ -13,19 +13,19 @@ class Settings {
         val properties = Properties()
 
         @JvmStatic
-        var VCODE_CSV_FILE_PATH: String = "/root/Project01/TextFiles/CodeN-Disk01.csv"
+        var VCODE_CSV_FILE_PATH: String = "/root/CT-GenAI_2025-11/TextFiles/CodeN-Disk01.csv"
 
         @JvmStatic
         var SRC_DICOM_PATH: String = "/public/home/guoheming/YeWanxing/Disk01"
 
         @JvmStatic
-        var DST_DICOM_PATH: String = "/mnt/sdc1/DstProject01/ResultDCM"
+        var DST_DICOM_PATH: String = "/mnt/sdb2/02-250825-非急诊-第1批/ResultDCM"
 
         @JvmStatic
-        var DST_DICOM_PATH2: String = "/data/shar01/backup/Dst_DICOM/Project01/Disk01/ResultDCM"
+        var DST_DICOM_PATH2: String = "/macrosan/backup/YeWanxing_DICOM/CT-GenAI_2025-11/Disk01/ResultDCM"
 
         @JvmStatic
-        var LOG_PATH: String = "/root/Project01/Logs/Disk01"
+        var LOG_PATH: String = "/root/CT-GenAI_2025-11/Logs/Disk01"
 
         @JvmStatic
         var IS_VALID_SUBJECT_NAME: Boolean = true
@@ -37,6 +37,10 @@ class Settings {
         @JvmStatic
         var NEED_SUBJECT_LIST_CSV_PATH: String = ""
 
+
+
+//        @JvmStatic
+//        var SITE_DIR_VALID_REGEX: Regex = """^.*/[0-9]{14}_[0-9]{9}_[^/]*$""".toRegex()
         /**
          * 受试者验证正则
          * 例如：
@@ -44,7 +48,7 @@ class Settings {
          *
          */
         @JvmStatic
-        var SUBJECT_DIR_VALID_REGEX: Regex = """^.*/[0-9]{14}_[0-9]{9}_[^/]*$""".toRegex()
+        var SUBJECT_DIR_VALID_REGEX: Regex = """^.*/[0-9]{14}_[0-9]{9}_[^/]*/.*$""".toRegex()
 
         /**
          * 影像文件DW层目录
@@ -53,7 +57,7 @@ class Settings {
          *
          */
         @JvmStatic
-        var DICOM_DW_DIR_VALID_REGEX = """^.*/[0-9]{14}_[0-9]{9}_[^/]*/.*$""".toRegex()
+        var DICOM_DW_DIR_VALID_REGEX = """^.*/[0-9]{14}_[0-9]{9}_.*?(/.*)+$""".toRegex()
 
         /**
          * 影像文件路径
@@ -118,7 +122,7 @@ class Settings {
          *
          */
         @JvmStatic
-        var ORIGIN_SUBJECT_DIR_REPLACE_TO_RELEASE_SUBJECT_DIR_REGEX_STR = "/[^/]*@originSubjectCode[^/]*/"
+        var ORIGIN_SUBJECT_DIR_REPLACE_TO_RELEASE_SUBJECT_DIR_REGEX_STR = """/[^/]*@originSubjectNumber[^/]*/"""
 
         @JvmStatic
                 /**
@@ -136,7 +140,7 @@ class Settings {
                  * 替换为：
                  * R:\Images-DICOM\Origin\C053\P01523\WANG-WEN-TAO__202205191714__CT__0100__Brain-Perfusion-Jog-AW47-CTA--\01706-1346670589331637885772767923705000015696748768904362609
                  */
-        var ORIGIN_SUBJECT_DIR_REPLACE_TO_RELEASE_SUBJECT_DIR_DST_STR = "/@desensitizedSubjectCode/"
+        var ORIGIN_SUBJECT_DIR_REPLACE_TO_RELEASE_SUBJECT_DIR_DST_STR = """/@originSubjectNumber/"""
 
         @JvmStatic
         fun init() {
@@ -154,6 +158,7 @@ class Settings {
                 IS_VALID_SUBJECT_NAME_SIMILARITY =
                     properties.getProperty("IS_VALID_SUBJECT_NAME_SIMILARITY", IS_VALID_SUBJECT_NAME_SIMILARITY.toString()).toBoolean()
                 NEED_SUBJECT_LIST_CSV_PATH = properties.getProperty("NEED_SUBJECT_LIST_CSV_PATH", NEED_SUBJECT_LIST_CSV_PATH)
+//                SITE_DIR_VALID_REGEX = properties.getProperty("SITE_DIR_VALID_REGEX", SITE_DIR_VALID_REGEX.pattern).toRegex()
                 SUBJECT_DIR_VALID_REGEX =
                     properties.getProperty("SUBJECT_DIR_VALID_REGEX", SUBJECT_DIR_VALID_REGEX.pattern).toRegex()
                 DICOM_DW_DIR_VALID_REGEX =

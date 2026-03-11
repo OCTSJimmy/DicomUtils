@@ -1,147 +1,254 @@
 package top.elune.utils.engine
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.launch
 import top.elune.utils.commons.CodeManager
 import top.elune.utils.commons.CodeModule
 import top.elune.utils.commons.SedaContext
 import top.elune.utils.commons.Settings
 import top.elune.utils.utils.LogUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import org.dcm4che3.data.Attributes
+import org.dcm4che3.data.Tag
+import org.dcm4che3.io.DicomInputStream
+import org.jetbrains.kotlin.com.google.common.util.concurrent.RateLimiter
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.Path
+import java.util.*
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
 
 class SedaScanner(private val ctx: SedaContext) {
 
     private val rootDir = File(ctx.config.inputPath)
-    // 新增：用于受试者去重的并发 Set
+    private val blacklistedDirs = ConcurrentHashMap.newKeySet<String>()
     private val trackedSubjects = ConcurrentHashMap.newKeySet<String>()
 
+    private val seriesCheck3DSaved = """^.*(3D Saved State).*$""".toRegex(RegexOption.IGNORE_CASE)
+    private val seriesCheckBiomind = """^.*biomind.*$""".toRegex(RegexOption.IGNORE_CASE)
+    private val seriesCheckBloodFlow =
+        """^.*(Processed Images|Time To Peak|Blood Flow|Blood Volume|Mean Transit Time).*$""".toRegex(RegexOption.IGNORE_CASE)
+    private val seriesCheckProcessed = """^.*Processed Images.*$""".toRegex()
+    private val dicomParserDispatcher = Dispatchers.IO.limitedParallelism(8)
+
     fun start() = ctx.engineScope.launch(Dispatchers.IO) {
-        // ==========================================
-        // 【优化 2】多工位并发队列：替代单线程的 ArrayDeque
-        // ==========================================
-        val dirQueue = Channel<File>(Channel.UNLIMITED)
-        dirQueue.send(rootDir)
+        val queue: Deque<File> = ArrayDeque()
+        queue.add(rootDir)
+        var lastLogTime = System.currentTimeMillis()
+        var scannedDirCount = 0L
+        try {
+            while (queue.isNotEmpty() && isActive) {
+                val currentFolder = queue.poll() ?: continue
+                // === 修改点 2: 心跳日志逻辑 ===
+                scannedDirCount++
+                val now = System.currentTimeMillis()
+                if (now - lastLogTime > ctx.config.logIntervalMs) {
+                    LogUtils.info(
+                        "【扫描中...】积压目录: ${queue.size} | 已扫目录: $scannedDirCount | " +
+                                "已发现影像: ${ctx.stats.fileScanned.get()} | " + "当前位置: .../${currentFolder.name}"
+                        // 注意：只打印文件夹名或截断路径，避免路径过长刷屏
+                    )
+                    lastLogTime = now
+                }
+                // 解决 Windows FileSystemException
+                val children: ArrayList<File> = ArrayList<File>()
 
-        // 任务追踪器：记录 (队列中 + 正在处理) 的目录总数
-        val activeTasks = AtomicInteger(1)
+                Files.list(currentFolder.toPath()).use { stream ->
+                    stream.limit(50000).forEach { path -> children.add(path.toFile()) }
+                }
 
-        // 开启 16 个并发游侠去扫目录 (完美掩盖 SMB/网络盘的延迟)
-        val scannerParallelism = 16
-        repeat(scannerParallelism) { workerId ->
-            launch {
-                for (currentFolder in dirQueue) {
-                    try {
-                        // ==========================================
-                        // 【优化 3】NIO 迭代器：替代缓慢且吃内存的 listFiles()
-                        // ==========================================
-                        Files.newDirectoryStream(currentFolder.toPath()).use { stream ->
-                            for (path in stream) {
-                                val child = path.toFile()
-                                if (child.isDirectory) {
-                                    if (isProjectRelevantDir(child.absolutePath)) {
-                                        activeTasks.incrementAndGet() // 发现新目录，任务总数 +1
-                                        dirQueue.send(child)
-                                    }
-                                } else {
-                                    if (checkIllegalFile(child.absolutePath)) continue
-                                    inspectAndDispatch(child)
-                                }
-                            }
+                if (children.isEmpty()) {
+                    LogUtils.errNoPrint("【扫描跳过】目录无法读取或无权限: ${currentFolder.absolutePath}")
+                    continue
+                }
+                val rateLimiter = RateLimiter.create(ctx.config.scanIOPS)
+                for (child in children) {
+                    val path = child.absolutePath
+                    // 1. 【纯内存计算】：极速前置过滤（0 IOPS，不碰底层存储）
+                    val isPotentiallyRelevantDir = isProjectRelevantDir(path)
+                    val isIllegalFile = checkIllegalFile(path)
+
+                    // 核心优化点：如果它既不是我们要找的目录类型，又是一个非法的/要排除的文件名
+                    // 那么不管它实际上是文件还是目录，我们都不关心！直接丢弃！
+                    if (!isPotentiallyRelevantDir && isIllegalFile) {
+                        continue // 完美短路！这节约了一次极其昂贵的 GlusterFS IO 调用
+                    }
+
+                    rateLimiter.acquire()
+                    if (child.isDirectory) {
+                        // 目录判定
+                        if (isPotentiallyRelevantDir) {
+                            queue.add(child)
                         }
-                    } catch (e: Exception) {
-                        LogUtils.errNoPrint("【扫描跳过】目录无法读取或无权限: ${currentFolder.absolutePath}")
-                    } finally {
-                        // 无论当前目录有没有子文件，处理完了就宣告当前任务结束
-                        if (activeTasks.decrementAndGet() == 0) {
-                            dirQueue.close() // 所有目录都扫完了，关闭通道，协程池自然下班
+                    } else {
+                        // 文件判定：排除非法后缀
+                        if (isIllegalFile) continue
+                        // 执行分发逻辑
+                        launch(dicomParserDispatcher) {
+                            inspectAndDispatch(child, children.size)
                         }
                     }
                 }
             }
+        } finally {
+            ctx.taskChannel.close()
+            LogUtils.info("Scanner 扫描阶段结束，总计下发任务: ${ctx.stats.fileScanned.get()}")
         }
-
-        // 挂起等待，直到 dirQueue 被 close，这意味着扫描彻底结束
-        // 虽然 Scanner 结束了，但我们要把收尾的日志打出来，并通知下游
-        ctx.taskChannel.close()
-        LogUtils.info("Scanner 扫描阶段结束，总计下发任务: ${ctx.stats.fileScanned.get()}")
     }
 
     private fun checkIllegalFile(srcStr: String): Boolean {
         val lowerStr = srcStr.lowercase()
         return when {
             lowerStr.endsWith(".nii.gz") -> {
-                 LogUtils.errNoPrint("File $srcStr is NIFITI")
+                LogUtils.errNoPrint("File $srcStr is NIFITI")
                 true
             }
+
             lowerStr.endsWith(".json") -> {
-                 LogUtils.errNoPrint("File $srcStr is JSON")
+                LogUtils.errNoPrint("File $srcStr is JSON")
                 true
             }
+
             lowerStr.endsWith(".jpg") || lowerStr.endsWith(".jpeg") || lowerStr.endsWith(".bmp") -> {
-                 LogUtils.errNoPrint("File $srcStr is Picture")
+                LogUtils.errNoPrint("File $srcStr is Picture")
                 true
             }
+
             else -> false
         }
     }
 
     // SedaScanner.kt 核心埋点逻辑
-    private suspend fun inspectAndDispatch(file: File) {
-        val path = file.absolutePath
-        ctx.stats.fileScanned.incrementAndGet() // 已发现
-
-        val originCode = path.replace(Settings.ORIGIN_SUBJECT_CODE_REPLACE_REGEX, Settings.ORIGIN_SUBJECT_CODE_REPLACE_DST)
-        val codeModule = CodeManager.INSTANCE[originCode]
-
-        if (codeModule == null) {
-            ctx.stats.fileIgnored.incrementAndGet()    // 文件类：忽略
+    private suspend fun inspectAndDispatch(file: File, parentFileCount: Int) {
+        val parentPath = file.parentFile.absolutePath
+        val originCode = file.absolutePath.replace(
+            Settings.ORIGIN_SUBJECT_CODE_REPLACE_REGEX, Settings.ORIGIN_SUBJECT_CODE_REPLACE_DST
+        )
+        // 1. 【快速失败】如果父目录已被拉黑，直接跳过 (不需要 IO)
+        if (blacklistedDirs.contains(parentPath)) {
+            ctx.stats.fileIgnored.incrementAndGet()
+            LogUtils.debugNoPrint("Skip this file at %s with Black List Dirs.", file.absolutePath)
             if (trackedSubjects.add(originCode)) {
                 ctx.stats.subjectIgnored.incrementAndGet()
             }
             return
         }
+        val codeModule = CodeManager.INSTANCE[originCode]
+        if (codeModule == null) {
+            ctx.stats.fileError.incrementAndGet()    // 文件类：忽略
+            if (trackedSubjects.add(originCode)) {
+                ctx.stats.subjectError.incrementAndGet()
+            }
+            return
+        }
 
-        // 统计：成功识别并开始处理一个受试者 (仅在第一次识别到该 ID 时或简化处理)
-        // 注意：此处为简化逻辑，每发现一个属于该受试者的文件都可能触发，
-        // 若需去重，建议在 start() 中识别到 SubjectDir 匹配时增加 subjectSuccess。
+        val relPath = calculateRelPath(file.absolutePath, codeModule)
+
+        // 2. 【预读取 Header】
+        // 这一步虽然有 IO，但为了过滤是必须的。且我们用 Task 把它传下去，不算浪费。
+        val attributes = try {
+            readHeaderEfficiently(file)
+        } catch (e: Exception) {
+            LogUtils.errNoPrint("Header读取失败: ${file.name}, because with %n ${e.message}")
+            ctx.stats.fileError.incrementAndGet()
+            return
+        }
+
+        // 3. 【内容审计】判断是否命中黑名单规则
+        if (checkAndSkipSeries(attributes, codeModule, file, parentFileCount)) {
+            LogUtils.infoNoPrint("触发目录屏蔽规则，拉黑目录: $parentPath (触发文件: ${file.name})")
+            blacklistedDirs.add(parentPath) // ⚡ 拉黑整个目录
+            ctx.stats.fileIgnored.incrementAndGet()
+            return
+        }
+
+        val isDW = file.absolutePath.matches(Settings.DICOM_DW_DIR_VALID_REGEX)
         if (trackedSubjects.add(originCode)) {
             ctx.stats.subjectSuccess.incrementAndGet()
         }
-
-        val targetRelPath = calculateRelPath(path, codeModule)
-        val isDW = path.matches(Settings.DICOM_DW_DIR_VALID_REGEX)
-
         // 投递前计数
         ctx.stats.tasksDelivered.incrementAndGet() // 已投递
         ctx.scanQueuePending.incrementAndGet()      // 内存积压+1
 
-        ctx.taskChannel.send(DicomTask(file, codeModule, targetRelPath, isDW))
+        // 这里的 attributes 只有几 KB，完全可以放在内存里流转
+        ctx.taskChannel.send(DicomTask(file, codeModule, relPath, isDW, attributes))
+        ctx.stats.fileScanned.incrementAndGet()
+    }
+
+    /**
+     * 高效读取 Header (只读到 PixelData 为止)
+     */
+    private fun readHeaderEfficiently(file: File): Attributes {
+        DicomInputStream(file).use { dis ->
+            // 不读大对象，遇到 PixelData 立即停止
+            return dis.readDatasetUntilPixelData()
+        }
     }
 
     private fun isProjectRelevantDir(path: String): Boolean {
         return when {
+//            path.matches(Settings.SITE_DIR_VALID_REGEX) -> {
+//                LogUtils.infoNoPrint("Current Site Dir: %s", path)
+//                true
+//            }
             path.matches(Settings.SUBJECT_DIR_VALID_REGEX) -> {
                 LogUtils.infoNoPrint("Current Subject Dir: %s", path)
                 true
             }
+
             path.matches(Settings.DICOM_DW_DIR_VALID_REGEX) -> {
                 LogUtils.debugNoPrint("DICOM DW Dir: %s", path)
                 true
             }
+
             path.matches(Settings.DICOM_OTHER_DIRS_VALID_REGEX) -> {
                 LogUtils.debugNoPrint("DICOM Other Dir: %s", path)
                 true
             }
+
             path == rootDir.absolutePath -> true // 根目录放行
             else -> {
                 LogUtils.errNoPrint("【未匹配目录跳过】路径: %s", path)
                 false
             }
         }
+    }
+
+    private fun printSkipInfoMessage(originCode: String?, src: File, seriesDescription: String?) {
+        ctx.stats.fileIgnored.incrementAndGet()
+        LogUtils.debugNoPrint(
+            "Skip %s dicom file at %s, because SeriesDescription is : %s",
+            originCode,
+            src.absolutePath,
+            seriesDescription
+        )
+    }
+
+    fun checkAndSkipSeries(attributes: Attributes, codeModule: CodeModule, src: File, parentFileCount:Int): Boolean {
+
+        val seriesDescription = attributes.getString(Tag.SeriesDescription, "")
+        // Important: Skip (3D Saved State|biomind)
+        if (null != seriesDescription && seriesDescription.matches(seriesCheck3DSaved)) {
+            printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
+            return true
+        }
+        if (null != seriesDescription && seriesDescription.matches(seriesCheckBiomind)) {
+            printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
+            return true
+        }
+
+        if (null != seriesDescription && seriesDescription.matches(seriesCheckBloodFlow)) {
+
+            if (!seriesDescription.matches(seriesCheckProcessed)) {
+                printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
+                return true
+            }
+            if (parentFileCount < 100) {
+                printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
+                return true
+            }
+        }
+        return false
     }
 
     /**
@@ -158,8 +265,6 @@ class SedaScanner(private val ctx: SedaContext) {
         val placeholderMap = mapOf(
             "@originSubjectNumber" to codeModule.originSubjectNumber,
             "@desensitizedSubjectNumber" to codeModule.desensitizedSubjectNumber,
-            "@originSiteCode" to codeModule.originSiteCode,
-            "@desensitizedSiteCode" to codeModule.desensitizedSiteCode,
             "@originSubjectCode" to codeModule.originSubjectCode,
             "@desensitizedSubjectCode" to codeModule.desensitizedSubjectCode
             // 如果 CodeModule 后续增加了 siteCode 或 vSiteCode，只需在这里追加一行：
@@ -178,7 +283,7 @@ class SedaScanner(private val ctx: SedaContext) {
         val desensitizedFullPath = try {
             fullPath.replaceFirst(finalRegexStr.toRegex(), finalDstStr)
         } catch (e: Exception) {
-            LogUtils.err("路径正则替换失败! Regex: $finalRegexStr, Path: $fullPath")
+            LogUtils.err("路径正则替换失败! Regex: $finalRegexStr, Path: $fullPath, because with %n ${e.message}")
             fullPath // 降级处理：如果替换失败，保持原路径结构（或根据业务抛出异常）
         }
 

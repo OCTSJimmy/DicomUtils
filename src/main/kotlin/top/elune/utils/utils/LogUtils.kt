@@ -1,7 +1,7 @@
 package top.elune.utils.utils
 
-import org.apache.commons.io.output.WriterOutputStream
 import top.elune.utils.commons.Settings
+import org.apache.commons.io.output.WriterOutputStream
 import java.io.*
 import java.nio.charset.StandardCharsets
 import java.nio.file.Paths
@@ -244,7 +244,7 @@ object LogUtils {
                 err.printStackTrace()
 
                 // 微调点 3：使用带编码保障的流包装
-                val wos = WriterOutputStream(sLogErrBw, StandardCharsets.UTF_8)
+                val wos = WriterOutputStream.builder().setCharset(StandardCharsets.UTF_8).setWriter(sLogErrBw).get()
                 val ps = PrintStream(wos, true, StandardCharsets.UTF_8.name())
 
                 // 写入完整堆栈

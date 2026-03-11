@@ -13,7 +13,7 @@ class SedaEngine(private val ctx: SedaContext) {
 
     fun run() = runBlocking {
         LogUtils.info(">>> SedaEngine 2.0 启动 (稳定版流水线) <<<")
-
+        val startTime = System.currentTimeMillis()
         val timeConsumed = measureTimeMillis {
             // 1. 启动 Writer 协程
             val writerJob = ctx.engineScope.launch {
@@ -26,7 +26,13 @@ class SedaEngine(private val ctx: SedaContext) {
                     processor.start() // 修改：让 processor 暴露一个消费循环
                 }
             }
-
+            val monitorJob = ctx.engineScope.launch {
+                while (isActive) {
+                    delay(5000) // 每 5 秒输出一次
+                    // 直接复用 printFinalStats，传入当前已逝去的时间
+                    printFinalStats(System.currentTimeMillis() - startTime)
+                }
+            }
             // 3. 启动 Scanner 并等待它扫描完成
             // Scanner 完成后会执行 ctx.taskChannel.close()
             scanner.start().join()
@@ -40,16 +46,18 @@ class SedaEngine(private val ctx: SedaContext) {
 
             // 6. 最后等待 Writer 彻底写完磁盘
             writerJob.join()
+            monitorJob.cancel()
+            LogUtils.info("脱敏任务完成！")
         }
-
         printFinalStats(timeConsumed)
     }
 
     private fun printFinalStats(timeConsumed: Long) {
         val s = ctx.stats
-        LogUtils.info("""
+        LogUtils.info(
+            """
         ================================================
-        脱敏任务完成！总耗时: ${timeConsumed / 1000}s
+        总耗时: ${timeConsumed / 1000}s
         ------------------------------------------------
         【任务流监控】
         - 已发现数量: ${s.fileScanned.get()}
@@ -66,6 +74,7 @@ class SedaEngine(private val ctx: SedaContext) {
         - 主路失败: ${s.fileError.get()}
         - 已忽略数: ${s.fileIgnored.get()}
         ================================================
-    """.trimIndent())
+    """.trimIndent()
+        )
     }
 }

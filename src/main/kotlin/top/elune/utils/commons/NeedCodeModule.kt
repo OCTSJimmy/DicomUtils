@@ -1,4 +1,4 @@
-package cn.org.ncrcnd.bigdata.ct_genai.dicom.selector.commons
+package top.elune.utils.commons
 
 @Suppress("unused")
 class NeedCodeModule @JvmOverloads constructor(

@@ -2,6 +2,7 @@ package top.elune.utils.utils;
 
 import java.util.Objects;
 
+@SuppressWarnings("unused")
 public class StringUtils {
     /**
      * 求取两个字符串间，最短编辑距离，算法：Levenshtein

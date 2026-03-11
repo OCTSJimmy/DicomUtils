@@ -6,11 +6,15 @@ import top.elune.utils.commons.SedaContext
 import top.elune.utils.commons.Settings
 import top.elune.utils.engine.SedaEngine
 import top.elune.utils.utils.LogUtils
+import java.nio.charset.Charset
 import java.util.*
 
 
 fun main(@Suppress("unused") args: Array<String>) {
-    Locale.setDefault(Locale.ENGLISH)
+    Locale.setDefault(Locale.SIMPLIFIED_CHINESE)
+
+    println("file.encoding: " + Charset.defaultCharset().displayName())
+    println("Default Charset: " + Charset.defaultCharset())
     Settings.init()
     LogUtils.init(Settings.LOG_PATH)
     CodeManager.init(Settings.VCODE_CSV_FILE_PATH)

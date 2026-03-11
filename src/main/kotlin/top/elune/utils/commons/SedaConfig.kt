@@ -10,11 +10,14 @@ data class SedaConfig(
     val logPath: String = Settings.LOG_PATH,
 
     // 背压阈值：根据内存情况调整，1000个小文件任务大约占用几百MB内存
+    val scanIOPS:Double  = 1000.00,
     val scanQueueSize: Int = 5000,
-    val processQueueSize: Int = 1000,
+    val processQueueSize: Int = 2000,
+
+    val logIntervalMs: Long = 3000L,
 
     // 调度器并发限制
-    val ntfsWriterParallelism: Int = 2, // 限制 NTFS 写入并发，防止卡死
-    val nfsWriterParallelism: Int = 8,  // NFS 相对稳健
+    val ntfsWriterParallelism: Int = 8, // 限制 NTFS 写入并发，防止卡死
+    val nfsWriterParallelism: Int = 32,  // NFS 相对稳健
     val cpuParallelism: Int = Runtime.getRuntime().availableProcessors()
 )

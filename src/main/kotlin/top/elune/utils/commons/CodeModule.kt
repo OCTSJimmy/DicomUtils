@@ -9,12 +9,10 @@ package top.elune.utils.commons
  */
 @Suppress("unused")
 open class CodeModule(
-    private var mSiteCode: String,
     private var mSubjectCode: String,
-    private var mSubjectNumber: String? = String.format("%s-%s", mSiteCode, mSubjectCode),
-    private var mvSiteCode: String,
+    private var mSubjectNumber: String? = String.format("%s", mSubjectCode),
     private var mvSubjectCode: String?,
-    private var mvSubjectNumber: String? = String.format("%s-%s", mvSiteCode, mvSubjectCode),
+    private var mvSubjectNumber: String? = String.format("%s", mvSubjectCode),
     private var mIsDone: Boolean = false,
 ) : Cloneable {
     var name: String? = null
@@ -33,14 +31,8 @@ open class CodeModule(
     val desensitizedSubjectNumber: String
         get() = mvSubjectNumber ?: ""
 
-    val originSiteCode: String
-        get() = mSiteCode
-
     val originSubjectCode: String
         get() = mSubjectCode
-
-    val desensitizedSiteCode: String
-        get() = mvSiteCode
 
     val desensitizedSubjectCode: String
         get() = mvSubjectCode ?: ""

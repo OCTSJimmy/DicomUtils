@@ -1,16 +1,15 @@
 package top.elune.utils.engine
 
+import top.elune.utils.commons.SedaContext
+import top.elune.utils.dicom.CustomDicomInputStream
+import top.elune.utils.dicom.OriginDicomData
+import top.elune.utils.utils.LogUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.dcm4che3.data.Attributes
 import org.dcm4che3.data.Tag
 import org.dcm4che3.data.VR
-import top.elune.utils.commons.SedaContext
-import top.elune.utils.dicom.CustomDicomInputStream
-import top.elune.utils.dicom.CustomDicomOutputStream
-import top.elune.utils.dicom.OriginDicomData
-import top.elune.utils.utils.LogUtils
-import java.io.ByteArrayOutputStream
+import java.util.*
 
 class SedaProcessor(private val ctx: SedaContext) {
 
@@ -48,7 +47,7 @@ class SedaProcessor(private val ctx: SedaContext) {
 
     private fun applyDesid(
         attrs: Attributes,
-        desensitizedSubjectCode: String,
+        desensitizedSubjectNumber: String,
         task: DicomTask
     ) {
         try {
@@ -59,8 +58,8 @@ class SedaProcessor(private val ctx: SedaContext) {
             }
 
             // 核心身份替换
-            attrs.setString(Tag.PatientName, VR.PN, desensitizedSubjectCode)
-            attrs.setString(Tag.PatientID, VR.LO, desensitizedSubjectCode)
+            attrs.setString(Tag.PatientName, VR.PN, desensitizedSubjectNumber)
+            attrs.setString(Tag.PatientID, VR.LO, desensitizedSubjectNumber)
 
             // 隐私清空 (严格遵守提供的逻辑)
             attrs.setNull(Tag.InstitutionName, VR.LO)
@@ -82,34 +81,36 @@ class SedaProcessor(private val ctx: SedaContext) {
         }
     }
 
+
+
     // SedaProcessor.kt doTransform 逻辑
     private fun doTransform(task: DicomTask): ProcessedResult {
         // 领用任务，减少积压计数
         ctx.scanQueuePending.decrementAndGet() //
 
         CustomDicomInputStream(task.originFile).use { dis ->
-            val attrs = dis.readDataset(-1, -1)
-
+            // === 修改点 1: 仅读取元数据，遇到 PixelData (7FE0,0010) 即停止 ===
+            // 这样 attrs 里只有几十 KB 的文本数据，没有几百 MB 的图像
+            val attrs : Attributes = dis.readDatasetUntilPixelData()
             // --- 多帧影像检测 ---
             val frames = attrs.getInt(Tag.NumberOfFrames, 1)
             if (frames > 1) {
                 LogUtils.debugNoPrint("检测到多帧影像 ($frames 帧): ${task.originFile.name}")
             }
 
-            val desensitizedSubjectCode = task.codeModule.desensitizedSubjectCode
-            applyDesid(attrs, desensitizedSubjectCode, task)
+            val desensitizedSubjectNumber = task.codeModule.desensitizedSubjectNumber
 
-            val baos = ByteArrayOutputStream()
-            val tsuid = dis.fileMetaInformation?.getString(Tag.TransferSyntaxUID) ?: "1.2.840.10008.1.2.1"
-            CustomDicomOutputStream(baos, tsuid).use { it.writeDataset(dis.fileMetaInformation, attrs) }
+            val extractOriginData = extractOriginData(attrs, task)
+
+            applyDesid(attrs, desensitizedSubjectNumber, task)
 
             // 处理完成，投递到写入管道前
             ctx.writeQueuePending.incrementAndGet() //
             ctx.stats.fileProcessed.incrementAndGet()
 
             return ProcessedResult(
-                task.originFile, task.targetRelativePath, task.codeModule, baos.toByteArray(),
-                extractOriginData(attrs, task), true
+                task.originFile, task.targetRelativePath, task.codeModule, null, attrs,
+                extractOriginData, true
             )
         }
     }
@@ -125,21 +126,19 @@ class SedaProcessor(private val ctx: SedaContext) {
             originDicomData = OriginDicomData(
                 attrs.getString(Tag.PatientName),
                 attrs.getString(Tag.PatientID),
-                task.codeModule.originSiteCode,
                 task.codeModule.originSubjectNumber,
-                task.codeModule.originSiteCode,
                 task.codeModule.desensitizedSubjectNumber,
                 attrs.getString(Tag.StudyID),
                 attrs.getString(Tag.PatientSex),
                 attrs.getString(Tag.PatientAge),
                 attrs.getString(Tag.PatientWeight),
-                attrs.getDate(Tag.PatientBirthDate),
+                attrs.getDate(Tag.PatientBirthDate)?.let { Date(it.time) },
                 attrs.getString(Tag.StudyDescription),
                 attrs.getString(Tag.DeviceSerialNumber),
-                attrs.getDate(Tag.StudyDate),
-                attrs.getDate(Tag.SeriesDate),
-                attrs.getDate(Tag.AcquisitionDate),
-                attrs.getDate(Tag.ContentDate),
+                attrs.getDate(Tag.StudyDate)?.let { Date(it.time) },
+                attrs.getDate(Tag.SeriesDate)?.let { Date(it.time) },
+                attrs.getDate(Tag.AcquisitionDate)?.let { Date(it.time) },
+                attrs.getDate(Tag.ContentDate)?.let { Date(it.time) },
                 attrs.getString(Tag.Manufacturer, ""),
                 attrs.getString(Tag.ManufacturerModelName, ""),
                 task.originFile.absolutePath
