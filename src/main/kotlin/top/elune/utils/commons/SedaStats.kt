@@ -8,7 +8,10 @@ import java.util.concurrent.atomic.AtomicLong
 @Suppress("unused")
 class SedaStats {
     // === 进程/线程类信息 ===
-// === 进程/线程/任务类信息 ===
+    // === 进程/线程/任务类信息 ===
+    val scannedDirCount = AtomicLong(0)
+    val scannerQueueSize = AtomicLong(0)
+    val currentPath: StringBuilder = StringBuilder()
     val fileScanned = AtomicLong(0)    // 已发现数量 (Scanner 扫到的所有文件)
     val tasksDelivered = AtomicLong(0) // 已投递任务数量 (进入管道的任务)
     val fileProcessed = AtomicLong(0)  // 已脱敏处理完成数量

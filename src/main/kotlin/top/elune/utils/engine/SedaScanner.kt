@@ -21,28 +21,23 @@ import java.util.concurrent.ConcurrentHashMap
 class SedaScanner(private val ctx: SedaContext) {
 
     private val rootDir = File(ctx.config.inputPath)
+    private val blacklistedDirs = ConcurrentHashMap.newKeySet<String>()
     private val trackedSubjects = ConcurrentHashMap.newKeySet<String>()
+
     private val dicomParserDispatcher = Dispatchers.IO.limitedParallelism(8)
 
     fun start() = ctx.engineScope.launch(Dispatchers.IO) {
         val queue: Deque<File> = ArrayDeque()
         queue.add(rootDir)
         var lastLogTime = System.currentTimeMillis()
-        var scannedDirCount = 0L
         try {
             while (queue.isNotEmpty() && isActive) {
                 val currentFolder = queue.poll() ?: continue
                 // === 修改点 2: 心跳日志逻辑 ===
-                scannedDirCount++
-                val now = System.currentTimeMillis()
-                if (now - lastLogTime > ctx.config.logIntervalMs) {
-                    LogUtils.info(
-                        "【扫描中...】积压目录: ${queue.size} | 已扫目录: $scannedDirCount | " +
-                                "已发现影像: ${ctx.stats.fileScanned.get()} | " + "当前位置: .../${currentFolder.name}"
-                        // 注意：只打印文件夹名或截断路径，避免路径过长刷屏
-                    )
-                    lastLogTime = now
-                }
+                ctx.stats.scannedDirCount.incrementAndGet()
+                ctx.stats.scannerQueueSize.set(queue.size.toLong())
+                ctx.stats.currentPath.clear().append(currentFolder.name)
+
                 // 解决 Windows FileSystemException
                 val children: ArrayList<File> = ArrayList<File>()
 
@@ -71,6 +66,7 @@ class SedaScanner(private val ctx: SedaContext) {
                     if (child.isDirectory) {
                         // 目录判定
                         if (isPotentiallyRelevantDir) {
+                            LogUtils.debugNoPrint("DICOM DW Dir: %s", path)
                             queue.add(child)
                         }
                     } else {
@@ -116,7 +112,7 @@ class SedaScanner(private val ctx: SedaContext) {
             Settings.ORIGIN_SUBJECT_CODE_REPLACE_REGEX, Settings.ORIGIN_SUBJECT_CODE_REPLACE_DST
         )
         // 1. 【快速失败】如果父目录已被拉黑，直接跳过 (不需要 IO)
-        if (ctx.blacklistedDirs.contains(parentPath)) {
+        if (blacklistedDirs.contains(parentPath)) {
             ctx.stats.fileIgnored.incrementAndGet()
             LogUtils.debugNoPrint("Skip this file at %s with Black List Dirs.", file.absolutePath)
             if (trackedSubjects.add(originCode)) {
@@ -135,47 +131,19 @@ class SedaScanner(private val ctx: SedaContext) {
 
         val relPath = calculateRelPath(file.absolutePath, codeModule)
         val isDW = file.absolutePath.matches(Settings.DICOM_DW_DIR_VALID_REGEX)
-        if (trackedSubjects.add(originCode)) {
-            ctx.stats.subjectSuccess.incrementAndGet()
-        }
-
-        // 投递前计数
-        ctx.stats.tasksDelivered.incrementAndGet() // 已投递
-        ctx.scanQueuePending.incrementAndGet()      // 内存积压+1
-
-        // 这里的 attributes 只有几 KB，完全可以放在内存里流转
-        ctx.taskChannel.send(DicomTask(file, codeModule, relPath, isDW, attributes))
+        if (trackedSubjects.add(originCode)) ctx.stats.subjectSuccess.incrementAndGet()
+        ctx.stats.tasksDelivered.incrementAndGet()
+        ctx.scanQueuePending.incrementAndGet()
+        ctx.taskChannel.send(DicomTask(file, codeModule, relPath, isDW, parentFileCount))
         ctx.stats.fileScanned.incrementAndGet()
 
     }
 
     private fun isProjectRelevantDir(path: String): Boolean {
-        return when {
-//            path.matches(Settings.SITE_DIR_VALID_REGEX) -> {
-//                LogUtils.infoNoPrint("Current Site Dir: %s", path)
-//                true
-//            }
-            path.matches(Settings.SUBJECT_DIR_VALID_REGEX) -> {
-                LogUtils.infoNoPrint("Current Subject Dir: %s", path)
-                true
-            }
-
-            path.matches(Settings.DICOM_DW_DIR_VALID_REGEX) -> {
-                LogUtils.debugNoPrint("DICOM DW Dir: %s", path)
-                true
-            }
-
-            path.matches(Settings.DICOM_OTHER_DIRS_VALID_REGEX) -> {
-                LogUtils.debugNoPrint("DICOM Other Dir: %s", path)
-                true
-            }
-
-            path == rootDir.absolutePath -> true // 根目录放行
-            else -> {
-                LogUtils.errNoPrint("【未匹配目录跳过】路径: %s", path)
-                false
-            }
-        }
+        return  path == rootDir.absolutePath
+                || path.matches(Settings.SUBJECT_DIR_VALID_REGEX)
+                || path.matches(Settings.DICOM_DW_DIR_VALID_REGEX)
+                || path.matches(Settings.DICOM_OTHER_DIRS_VALID_REGEX)
     }
 
 

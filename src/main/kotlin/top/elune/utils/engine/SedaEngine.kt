@@ -59,6 +59,12 @@ class SedaEngine(private val ctx: SedaContext) {
         ================================================
         总耗时: ${timeConsumed / 1000}s
         ------------------------------------------------
+        【扫描监控】
+        - 积压目录： ${s.scannerQueueSize.get()}
+        - 已扫描目录： ${s.scannedDirCount.get()}
+        - 已发现影像： ${s.fileScanned.get()}
+        - 当前路径： ${s.currentPath.toString()}
+        ------------------------------------------------
         【任务流监控】
         - 已发现数量: ${s.fileScanned.get()}
         - 已投递任务: ${s.tasksDelivered.get()}
