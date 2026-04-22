@@ -25,7 +25,7 @@ object LogUtils {
     private var sLogInfoBw: BufferedWriter? = null
 
     // 1. 定义日志类型枚举
-    private enum class LogType {
+    enum class LogType {
         LOG, DEBUG, INFO, ERROR
     }
 
@@ -112,14 +112,16 @@ object LogUtils {
         }
     }
 
-    fun printMainProgress(actionStr: String,
-                          runningSize : Int,
-                          doneSize : Int,
-                          doneSubject:Int,
-                          ignoreSubject:Int,
-                          successFile:Int,
-                          failureFile:Int,
-                          ignoreFile:Int) {
+    fun printMainProgress(
+        actionStr: String,
+        runningSize: Int,
+        doneSize: Int,
+        doneSubject: Int,
+        ignoreSubject: Int,
+        successFile: Int,
+        failureFile: Int,
+        ignoreFile: Int
+    ) {
         log(
             "Current Time: %s",
             SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSSSSSSSS").format(System.currentTimeMillis())
@@ -176,10 +178,35 @@ object LogUtils {
     }
 
     @JvmStatic
-    fun log(format: String, shouldPrint: Boolean, vararg content: Any?) {
-        val str = String.format("thread:${Thread.currentThread().name}, $format", *content)
-        logQueue.put(LogEntry(str, LogType.LOG, shouldPrint)) // Print
+    fun sendToLogQueue(format: String, type: LogType, shouldPrint: Boolean, vararg content: Any?) {
+        val prefix = "thread:${Thread.currentThread().name}, "
+
+        // 判定是否有有效的格式化参数：
+        // 1. 数组不能为空
+        // 2. 如果只有一个元素，不能是 null 或空/空白字符串
+        val hasValidContent = content.isNotEmpty() &&
+                !(content.size == 1 && content[0]?.toString().isNullOrBlank())
+
+        val str = if (hasValidContent) {
+            // 有有效参数：安全使用 String.format
+            prefix + String.format(format, *content)
+        } else {
+            // 无有效参数：直接拼接，不解析 format 中的特殊字符
+            prefix + format
+        }
+        logQueue.put(LogEntry(str, type, shouldPrint)) // Print
     }
+
+    @JvmStatic
+    fun log(format: String, shouldPrint: Boolean, vararg content: Any?) {
+        sendToLogQueue(format, LogType.LOG, shouldPrint, *content)
+    }
+
+    @JvmStatic
+    fun info(format: String, shouldPrint: Boolean, vararg content: Any?) {
+        sendToLogQueue(format, LogType.INFO, shouldPrint, *content)
+    }
+
     @JvmStatic
     fun info(str: String) {
         info(str, "")
@@ -190,11 +217,6 @@ object LogUtils {
         info(format, true, *content)
     }
 
-    @JvmStatic
-    fun info(format: String, shouldPrint: Boolean, vararg content: Any?) {
-        val str = String.format("thread:${Thread.currentThread().name}, $format", *content)
-        logQueue.put(LogEntry(str, LogType.INFO, shouldPrint)) // Print
-    }
 
     @JvmStatic
     fun infoNoPrint(str: String) {
@@ -212,8 +234,7 @@ object LogUtils {
 
     @JvmStatic
     fun debug(format: String, shouldPrint: Boolean, vararg content: Any?) {
-        val str = String.format("thread:${Thread.currentThread().name}, $format", *content)
-        logQueue.put(LogEntry(str, LogType.DEBUG, shouldPrint)) // Print
+        sendToLogQueue(format, LogType.DEBUG, shouldPrint, *content)
     }
 
     @JvmStatic
@@ -233,13 +254,22 @@ object LogUtils {
 
     @JvmStatic
     fun err(err: Throwable) {
+        err(null, err)
+    }
+
+    @JvmStatic
+    fun err(tips: String?, err: Throwable) {
         // 微调点 1：生产者线程直接竞争锁。
         // 如果 LogDaemon 正在处理别的 Error 日志，这里会阻塞，直到那边处理完当前行。
         errorFileLock.withLock {
             try {
                 // 微调点 2：先对已有的 Buffer 进行冲刷，确保堆栈前没有残留半行日志
-                sLogErrBw?.flush()
 
+                sLogErrBw?.flush()
+                if (!tips.isNullOrBlank()) {
+                    sLogErrBw?.write(tips)
+                    sLogErrBw?.newLine()
+                }
                 // 打印到控制台
                 err.printStackTrace()
 
@@ -260,20 +290,50 @@ object LogUtils {
     }
 
     @JvmStatic
+    fun errNoPrint(err: Throwable) {
+        errNoPrint(null, err)
+    }
+
+    fun errNoPrint(tips: String?, err: Throwable) {
+        // 微调点 1：生产者线程直接竞争锁。
+        // 如果 LogDaemon 正在处理别的 Error 日志，这里会阻塞，直到那边处理完当前行。
+        errorFileLock.withLock {
+            try {
+                // 微调点 2：先对已有的 Buffer 进行冲刷，确保堆栈前没有残留半行日志
+                sLogErrBw?.flush()
+                if (!tips.isNullOrBlank()) {
+                    sLogErrBw?.write(tips)
+                    sLogErrBw?.newLine()
+                }
+                // 微调点 3：使用带编码保障的流包装
+                val wos = WriterOutputStream.builder().setCharset(StandardCharsets.UTF_8).setWriter(sLogErrBw).get()
+                val ps = PrintStream(wos, true, StandardCharsets.UTF_8.name())
+                // 写入完整堆栈
+                err.printStackTrace(ps)
+                // 微调点 4：强制再次冲刷，确保堆栈信息物理落地，不留在内存里
+                sLogErrBw?.flush()
+            } catch (e: Exception) {
+                // 即使堆栈记录失败，也别让日志逻辑把业务主流程搞崩溃
+                e.printStackTrace()
+            }
+        }
+    }
+
+    @JvmStatic
     fun err(str: String) {
         err(str, "")
     }
 
     @JvmStatic
     fun err(format: String, shouldPrint: Boolean, vararg content: Any?) {
-        val str = String.format("thread:${Thread.currentThread().name}, $format", *content)
-        logQueue.put(LogEntry(str, LogType.ERROR, shouldPrint)) // Print
+        sendToLogQueue(format,  LogType.ERROR,shouldPrint, *content)
     }
 
     @JvmStatic
     fun err(format: String, vararg content: Any?) {
         err(format, true, *content)
     }
+
     @JvmStatic
     fun errNoPrint(format: String, vararg content: Any?) {
         err(format, false, *content)

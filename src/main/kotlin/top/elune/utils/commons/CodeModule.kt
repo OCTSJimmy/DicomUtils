@@ -9,9 +9,11 @@ package top.elune.utils.commons
  */
 @Suppress("unused")
 open class CodeModule(
-    private var mSubjectCode: String,
+    var mSiteCode: String,
+    var mSubjectCode: String,
     private var mSubjectNumber: String? = String.format("%s", mSubjectCode),
-    private var mvSubjectCode: String?,
+    var vSiteCode: String,
+    var mvSubjectCode: String,
     private var mvSubjectNumber: String? = String.format("%s", mvSubjectCode),
     private var mIsDone: Boolean = false,
 ) : Cloneable {
@@ -35,7 +37,12 @@ open class CodeModule(
         get() = mSubjectCode
 
     val desensitizedSubjectCode: String
-        get() = mvSubjectCode ?: ""
+        get() = mvSubjectCode
+
+    fun isBlank(): Boolean {
+        return mSiteCode.isBlank() || (mSubjectCode.isBlank() && mSubjectNumber?.isBlank() ?: true)
+                || vSiteCode.isBlank() || (mvSubjectCode.isBlank() && mvSubjectNumber?.isBlank() ?: true)
+    }
 
     public override fun clone(): CodeModule {
         return super.clone() as CodeModule

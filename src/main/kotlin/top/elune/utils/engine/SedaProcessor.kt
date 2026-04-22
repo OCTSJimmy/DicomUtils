@@ -1,22 +1,20 @@
 package top.elune.utils.engine
 
-import top.elune.utils.commons.SedaContext
-import top.elune.utils.dicom.CustomDicomInputStream
-import top.elune.utils.dicom.OriginDicomData
-import top.elune.utils.utils.LogUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.dcm4che3.data.Attributes
 import org.dcm4che3.data.Tag
 import org.dcm4che3.data.VR
+import top.elune.utils.commons.CodeModule
+import top.elune.utils.commons.SedaContext
+import top.elune.utils.commons.Settings
+import top.elune.utils.dicom.CustomDicomInputStream
+import top.elune.utils.dicom.OriginDicomData
+import top.elune.utils.utils.LogUtils
+import java.io.File
 import java.util.*
 
 class SedaProcessor(private val ctx: SedaContext) {
-    private val seriesCheck3DSaved = """^.*(3D Saved State).*$""".toRegex(RegexOption.IGNORE_CASE)
-    private val seriesCheckBiomind = """^.*biomind.*$""".toRegex(RegexOption.IGNORE_CASE)
-    private val seriesCheckBloodFlow =
-        """^.*(Processed Images|Time To Peak|Blood Flow|Blood Volume|Mean Transit Time).*$""".toRegex(RegexOption.IGNORE_CASE)
-    private val seriesCheckProcessed = """^.*Processed Images.*$""".toRegex()
 
     fun start() {
         // 根据 CPU 核心数启动多个处理协程
@@ -31,8 +29,8 @@ class SedaProcessor(private val ctx: SedaContext) {
         for (task in ctx.taskChannel) {
             try {
                 val result = doTransform(task)
-                if(result !+ null ) {
-                   ctx.writeChannel.send(result)
+                if (result != null) {
+                    ctx.writeChannel.send(result)
                 }
             } catch (e: Exception) {
                 // 失败分支：确保字段名 isSuccess 与 ProcessedResult.kt 一致
@@ -47,7 +45,6 @@ class SedaProcessor(private val ctx: SedaContext) {
                     )
                 )
                 // 统计失败文件数
-                ctx.stats.fileError.incrementAndGet()
             }
         }
     }
@@ -77,10 +74,10 @@ class SedaProcessor(private val ctx: SedaContext) {
             attrs.setNull(Tag.StudyDescription, VR.LO)
             attrs.setNull(Tag.DeviceSerialNumber, VR.LO)
             // 时间/日期清空
-            val dateTags = intArrayOf(Tag.StudyDate, Tag.SeriesDate, Tag.AcquisitionDate, Tag.ContentDate)
-            dateTags.forEach { attrs.setNull(it, VR.DA) }
-            val timeTags = intArrayOf(Tag.StudyTime, Tag.SeriesTime, Tag.AcquisitionTime, Tag.ContentTime)
-            timeTags.forEach { attrs.setNull(it, VR.TM) }
+//            val dateTags = intArrayOf(Tag.StudyDate, Tag.SeriesDate, Tag.AcquisitionDate, Tag.ContentDate)
+//            dateTags.forEach { attrs.setNull(it, VR.DA) }
+//            val timeTags = intArrayOf(Tag.StudyTime, Tag.SeriesTime, Tag.AcquisitionTime, Tag.ContentTime)
+//            timeTags.forEach { attrs.setNull(it, VR.TM) }
 
         } catch (e: Exception) {
             LogUtils.err("Replace ${task.originFile.absolutePath} Tag Error: ${e.message}")
@@ -89,27 +86,29 @@ class SedaProcessor(private val ctx: SedaContext) {
     }
 
 
-
     // SedaProcessor.kt doTransform 逻辑
-    private fun doTransform(task: DicomTask): ProcessedResult {
+    private fun doTransform(task: DicomTask): ProcessedResult? {
         // 领用任务，减少积压计数
         ctx.scanQueuePending.decrementAndGet() //
         val parentPath = task.originFile.parentFile.absolutePath
+
+        // 【防线 2】：该目录可能在排队时刚刚被其他线程拉黑！
+        // 在真正发起极其昂贵的 I/O 前，再做一次纯内存检查，拦截泄漏任务！
         if (ctx.blacklistedDirs.contains(parentPath)) {
             ctx.stats.fileIgnored.incrementAndGet()
-            return null
+            return null // 优雅丢弃
         }
+
         CustomDicomInputStream(task.originFile).use { dis ->
             // === 修改点 1: 仅读取元数据，遇到 PixelData (7FE0,0010) 即停止 ===
             // 这样 attrs 里只有几十 KB 的文本数据，没有几百 MB 的图像
-            val attrs : Attributes = dis.readDatasetUntilPixelData()
-
-            // 3. 【内容审计】判断是否命中黑名单规则
-            if (checkAndSkipSeries(attrs, codeModule, file, parentFileCount)) {
-                LogUtils.infoNoPrint("触发目录屏蔽规则，拉黑目录: $parentPath (触发文件: ${file.name})")
-                blacklistedDirs.add(parentPath) // ⚡ 拉黑整个目录
+            val attrs: Attributes = dis.readDatasetUntilPixelData()
+            // 【动态黑名单审计】：读取 Header 后判定是否违规
+            if (checkAndSkipSeries(attrs, task.codeModule, task.originFile, task.parentFileCount)) {
+                LogUtils.infoNoPrint("触发目录屏蔽规则，拉黑目录: $parentPath")
+                ctx.blacklistedDirs.add(parentPath) // ⚡ 通知全局（包括 Scanner 和其他 Worker）
                 ctx.stats.fileIgnored.incrementAndGet()
-                return
+                return null // 优雅丢弃
             }
 
             // --- 多帧影像检测 ---
@@ -134,10 +133,9 @@ class SedaProcessor(private val ctx: SedaContext) {
             )
         }
     }
-
     private fun printSkipInfoMessage(originCode: String?, src: File, seriesDescription: String?) {
-        ctx.stats.fileIgnored.incrementAndGet()
-        LogUtils.debugNoPrint(
+//        ctx.stats.fileIgnored.incrementAndGet()
+        LogUtils.logNoPrint(
             "Skip %s dicom file at %s, because SeriesDescription is : %s",
             originCode,
             src.absolutePath,
@@ -145,33 +143,18 @@ class SedaProcessor(private val ctx: SedaContext) {
         )
     }
 
-    fun checkAndSkipSeries(attributes: Attributes, codeModule: CodeModule, src: File, parentFileCount:Int): Boolean {
-
-        val seriesDescription = attributes.getString(Tag.SeriesDescription, "")
-        // Important: Skip (3D Saved State|biomind)
-        if (null != seriesDescription && seriesDescription.matches(seriesCheck3DSaved)) {
-            printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
-            return true
-        }
-        if (null != seriesDescription && seriesDescription.matches(seriesCheckBiomind)) {
-            printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
-            return true
-        }
-
-        if (null != seriesDescription && seriesDescription.matches(seriesCheckBloodFlow)) {
-
-            if (!seriesDescription.matches(seriesCheckProcessed)) {
+    fun checkAndSkipSeries(attributes: Attributes, codeModule: CodeModule, src: File, parentFileCount: Int): Boolean {
+        return Settings.seriesFilterStrategies.any { strategy ->
+            if (strategy.shouldSkip(attributes, codeModule, src, parentFileCount)) {
+                val seriesDescription = attributes.getString(Tag.SeriesDescription, "")
                 printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
-                return true
-            }
-            if (parentFileCount < 100) {
-                printSkipInfoMessage(codeModule.originSubjectCode, src, seriesDescription)
-                return true
+                true
+            } else {
+                false
             }
         }
-        return false
     }
-    
+
     private fun extractOriginData(
         attrs: Attributes,
         task: DicomTask

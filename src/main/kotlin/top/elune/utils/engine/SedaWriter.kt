@@ -1,13 +1,13 @@
 package top.elune.utils.engine
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import top.elune.utils.commons.SedaContext
 import top.elune.utils.dicom.CustomDicomInputStream
 import top.elune.utils.dicom.CustomDicomOutputStream
 import top.elune.utils.dicom.OriginDicomData
 import top.elune.utils.utils.LogUtils
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.launch
 import java.io.*
 
 class SedaWriter(private val ctx: SedaContext) {
@@ -78,7 +78,7 @@ class SedaWriter(private val ctx: SedaContext) {
                 }
 
                 // 统一统计辅路
-                if (ctx.config.nfsOutputPath != null) {
+                if (ctx.config.nfsOutputPath != null && ctx.config.nfsOutputPath.isNotBlank()) {
                     when (nfsStatus) {
                         0 -> ctx.stats.backupError.incrementAndGet()
                         1 -> ctx.stats.backupSuccess.incrementAndGet()
@@ -118,13 +118,14 @@ class SedaWriter(private val ctx: SedaContext) {
 
                 val fmi = dis.readFileMetaInformation()
                 dis.readDatasetUntilPixelData()
-                val tsuid = fmi?.getString(org.dcm4che3.data.Tag.TransferSyntaxUID) ?: "1.2.840.10008.1.2.1"
+//                val tsuid = fmi?.getString(org.dcm4che3.data.Tag.TransferSyntaxUID) ?: org.dcm4che3.data.UID.ExplicitVRLittleEndian
+                val tsuid = org.dcm4che3.data.UID.ExplicitVRLittleEndian
 
                 // 2. 准备物理输出流 (谁需要写，就打开谁)
                 val outNtfs =
-                    if (ntfsStatus == 0) BufferedOutputStream(java.io.FileOutputStream(ntfsFile), bufferSize) else null
+                    if (ntfsStatus == 0) BufferedOutputStream(FileOutputStream(ntfsFile), bufferSize) else null
                 val outNfs =
-                    if (nfsStatus == 0) BufferedOutputStream(java.io.FileOutputStream(nfsFile!!), bufferSize) else null
+                    if (nfsStatus == 0) BufferedOutputStream(FileOutputStream(nfsFile!!), bufferSize) else null
 
                 // ==========================================
                 // 【黑科技 2：三通管双路写】
@@ -134,10 +135,15 @@ class SedaWriter(private val ctx: SedaContext) {
                     val dos = CustomDicomOutputStream(dualOut, tsuid)
 
                     dos.writeDataset(fmi, result.attributes)
+
+                    // 【修复逻辑】判断当前流是否停在了 PixelData，如果是，先补写 Header
+                    if (dis.tag() == org.dcm4che3.data.Tag.PixelData) {
+                        dos.writeHeader(dis.tag(), dis.vr(), dis.length())
+                    }
+
                     dos.flush()
 
-                    // 只读一次源盘！
-                    // 数据会自动在 DualOutputStream 内部被劈成两份，流向 NTFS 和 NFS
+                    // 然后再拷贝后续真正的二进制像素数据
                     dis.copyTo(dos)
 
                     // 写完后检查两路有没有发生局部异常
@@ -147,12 +153,12 @@ class SedaWriter(private val ctx: SedaContext) {
             }
         } catch (e: Exception) {
             // 全局灾难异常（比如源盘断开了），正在写的那路全部判定为失败，并删残片
-            LogUtils.errNoPrint("【双写整体异常】源: ${result.originFile.absolutePath}, 原因: ${e.message}")
+            LogUtils.errNoPrint(tips = "【双写整体异常】源: ${result.originFile.absolutePath}", e)
             if (ntfsStatus == 0) {
                 ntfsFile.delete(); ntfsStatus = 0
             }
             if (nfsStatus == 0) {
-                nfsFile!!.delete(); nfsStatus = 0
+                nfsFile?.delete(); nfsStatus = 0
             }
         }
 
@@ -168,7 +174,12 @@ class SedaWriter(private val ctx: SedaContext) {
     }
 
     private fun checkIdempotency(f: File): Int {
-        return if (f.exists() && f.length() > 0) 2 else 0
+        return if (f.exists() && f.length() > 0) {
+            LogUtils.infoNoPrint("Skip, because found dst %s is exists.", f.absolutePath)
+            2
+        } else {
+            0
+        }
     }
 }
 

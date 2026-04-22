@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicLong
 @Suppress("unused")
 class SedaStats {
     // === 进程/线程类信息 ===
-    // === 进程/线程/任务类信息 ===
+// === 进程/线程/任务类信息 ===
     val scannedDirCount = AtomicLong(0)
     val scannerQueueSize = AtomicLong(0)
     val currentPath: StringBuilder = StringBuilder()

@@ -54,6 +54,7 @@ class SedaEngine(private val ctx: SedaContext) {
 
     private fun printFinalStats(timeConsumed: Long) {
         val s = ctx.stats
+        val currentPath = s.currentPath.toString()
         LogUtils.info(
             """
         ================================================
@@ -63,7 +64,7 @@ class SedaEngine(private val ctx: SedaContext) {
         - 积压目录： ${s.scannerQueueSize.get()}
         - 已扫描目录： ${s.scannedDirCount.get()}
         - 已发现影像： ${s.fileScanned.get()}
-        - 当前路径： ${s.currentPath.toString()}
+        - 当前路径： $currentPath
         ------------------------------------------------
         【任务流监控】
         - 已发现数量: ${s.fileScanned.get()}

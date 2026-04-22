@@ -1,20 +1,16 @@
 package top.elune.utils.engine
 
+import com.google.common.util.concurrent.RateLimiter
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import top.elune.utils.commons.CodeManager
 import top.elune.utils.commons.CodeModule
 import top.elune.utils.commons.SedaContext
 import top.elune.utils.commons.Settings
 import top.elune.utils.utils.LogUtils
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import org.dcm4che3.data.Attributes
-import org.dcm4che3.data.Tag
-import org.dcm4che3.io.DicomInputStream
-import org.jetbrains.kotlin.com.google.common.util.concurrent.RateLimiter
 import java.io.File
 import java.nio.file.Files
-import java.nio.file.Path
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
@@ -107,6 +103,7 @@ class SedaScanner(private val ctx: SedaContext) {
 
     // SedaScanner.kt 核心埋点逻辑
     private suspend fun inspectAndDispatch(file: File, parentFileCount: Int) {
+        ctx.stats.fileScanned.incrementAndGet()
         val parentPath = file.parentFile.absolutePath
         val originCode = file.absolutePath.replace(
             Settings.ORIGIN_SUBJECT_CODE_REPLACE_REGEX, Settings.ORIGIN_SUBJECT_CODE_REPLACE_DST
@@ -125,6 +122,7 @@ class SedaScanner(private val ctx: SedaContext) {
             ctx.stats.fileError.incrementAndGet()    // 文件类：忽略
             if (trackedSubjects.add(originCode)) {
                 ctx.stats.subjectError.incrementAndGet()
+                LogUtils.errNoPrint("Skip this file at %s with NonCodeModule.", file.absolutePath)
             }
             return
         }
@@ -135,7 +133,7 @@ class SedaScanner(private val ctx: SedaContext) {
         ctx.stats.tasksDelivered.incrementAndGet()
         ctx.scanQueuePending.incrementAndGet()
         ctx.taskChannel.send(DicomTask(file, codeModule, relPath, isDW, parentFileCount))
-        ctx.stats.fileScanned.incrementAndGet()
+
 
     }
 

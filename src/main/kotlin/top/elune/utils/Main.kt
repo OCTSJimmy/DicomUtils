@@ -18,10 +18,11 @@ fun main(@Suppress("unused") args: Array<String>) {
     Settings.init()
     LogUtils.init(Settings.LOG_PATH)
     CodeManager.init(Settings.VCODE_CSV_FILE_PATH)
+    val dstDicomPath2Str = Settings.DST_DICOM_PATH2.ifBlank { null }
     val config = SedaConfig(
         inputPath = Settings.SRC_DICOM_PATH,
         ntfsOutputPath = Settings.DST_DICOM_PATH,
-        nfsOutputPath = Settings.DST_DICOM_PATH2,
+        nfsOutputPath = dstDicomPath2Str,
         logPath = Settings.LOG_PATH
     )
     SedaContext(config).use { ctx ->

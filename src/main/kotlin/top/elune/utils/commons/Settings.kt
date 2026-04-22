@@ -1,5 +1,8 @@
 package top.elune.utils.commons
 
+import org.dcm4che3.data.Tag
+import top.elune.utils.filter.factory.SeriesFilterStrategyFactory
+import top.elune.utils.filter.strategy.*
 import java.io.BufferedReader
 import java.io.FileInputStream
 import java.io.InputStreamReader
@@ -13,19 +16,19 @@ class Settings {
         val properties = Properties()
 
         @JvmStatic
-        var VCODE_CSV_FILE_PATH: String = "/root/CT-GenAI_2025-11/TextFiles/CodeN-Disk01.csv"
+        var VCODE_CSV_FILE_PATH: String = "/data01/<ProjectDir>/TextFiles/CodeN.csv"
 
         @JvmStatic
-        var SRC_DICOM_PATH: String = "/public/home/guoheming/YeWanxing/Disk01"
+        var SRC_DICOM_PATH: String = "/data01/<ProjectDir>/Images/<DICOM_Origin>"
 
         @JvmStatic
-        var DST_DICOM_PATH: String = "/mnt/sdb2/02-250825-非急诊-第1批/ResultDCM"
+        var DST_DICOM_PATH: String = "/data02/<ProjectDir>/Images/<DICOM_Release>"
 
         @JvmStatic
-        var DST_DICOM_PATH2: String = "/macrosan/backup/YeWanxing_DICOM/CT-GenAI_2025-11/Disk01/ResultDCM"
+        var DST_DICOM_PATH2: String = "/data03/<ProjectDir>/Images/<DICOM_Release>"
 
         @JvmStatic
-        var LOG_PATH: String = "/root/CT-GenAI_2025-11/Logs/Disk01"
+        var LOG_PATH: String = "/home/user/<ProjectDir>/Logs"
 
         @JvmStatic
         var IS_VALID_SUBJECT_NAME: Boolean = true
@@ -122,7 +125,7 @@ class Settings {
          *
          */
         @JvmStatic
-        var ORIGIN_SUBJECT_DIR_REPLACE_TO_RELEASE_SUBJECT_DIR_REGEX_STR = """/[^/]*@originSubjectNumber[^/]*/"""
+        var ORIGIN_SUBJECT_DIR_REPLACE_TO_RELEASE_SUBJECT_DIR_REGEX_STR = """/[^/]*@originSubjectNumber[^/]*/[^/]+?_+[0-9]{6}([0-9]{4,})_+([^/]*?)/"""
 
         @JvmStatic
                 /**
@@ -140,7 +143,10 @@ class Settings {
                  * 替换为：
                  * R:\Images-DICOM\Origin\C053\P01523\WANG-WEN-TAO__202205191714__CT__0100__Brain-Perfusion-Jog-AW47-CTA--\01706-1346670589331637885772767923705000015696748768904362609
                  */
-        var ORIGIN_SUBJECT_DIR_REPLACE_TO_RELEASE_SUBJECT_DIR_DST_STR = """/@originSubjectNumber/"""
+        var ORIGIN_SUBJECT_DIR_REPLACE_TO_RELEASE_SUBJECT_DIR_DST_STR = """/@desensitizedSubjectNumber/F__$1__$2/"""
+
+        @JvmStatic
+        var seriesFilterStrategies: List<SeriesFilterStrategy> = emptyList()
 
         @JvmStatic
         fun init() {
@@ -187,12 +193,53 @@ class Settings {
                     ORIGIN_SUBJECT_DIR_REPLACE_TO_RELEASE_SUBJECT_DIR_DST_STR
                 )
 
+                seriesFilterStrategies = try {
+                    val strategies = SeriesFilterStrategyFactory.createStrategies(properties)
+                    if (strategies.isEmpty()) createDefaultFilterStrategies() else strategies
+                } catch (e: Exception) {
+                    System.err.println("Load filter strategies failed, using defaults: ${e.message}")
+                    e.printStackTrace()
+                    createDefaultFilterStrategies()
+                }
+
             } catch (e: Exception) {
                 System.err.println("Load settings.properties Error.")
                 e.printStackTrace()
             } finally {
                 reader?.close()
             }
+        }
+
+        private fun createDefaultFilterStrategies(): List<SeriesFilterStrategy> {
+            return listOf(
+                RegexMatchFilterStrategy(
+                    Tag.SeriesDescription,
+                    """^.*(3D Saved State).*$""".toRegex(RegexOption.IGNORE_CASE)
+                ),
+                RegexMatchFilterStrategy(
+                    Tag.SeriesDescription,
+                    """^.*biomind.*$""".toRegex(RegexOption.IGNORE_CASE)
+                ),
+                AndFilterStrategy(
+                    listOf(
+                        RegexMatchFilterStrategy(
+                            Tag.SeriesDescription,
+                            """^.*(Processed Images|Time To Peak|Blood Flow|Blood Volume|Mean Transit Time).*$""".toRegex(
+                                RegexOption.IGNORE_CASE
+                            )
+                        ),
+                        OrFilterStrategy(
+                            listOf(
+                                RegexNotMatchFilterStrategy(
+                                    Tag.SeriesDescription,
+                                    """^.*Processed Images.*$""".toRegex()
+                                ),
+                                FileCountLtFilterStrategy(100)
+                            )
+                        )
+                    )
+                )
+            )
         }
     }
 }

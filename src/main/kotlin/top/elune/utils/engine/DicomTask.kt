@@ -1,7 +1,6 @@
 package top.elune.utils.engine
 
 import top.elune.utils.commons.CodeModule
-import org.dcm4che3.data.Attributes
 import java.io.File
 
 /**
@@ -12,5 +11,5 @@ data class DicomTask(
     val codeModule: CodeModule,       // 包含原始/虚拟编号、分中心等所有映射信息
     val targetRelativePath: String,   // 预计算的目标存储相对路径
     val isDW: Boolean = false,         // 标记是否为 DW 序列目录下的影像
-    val parentFileCount: Int = 0,     // 父目录下的文件数量
+    val parentFileCount: Int
 )
