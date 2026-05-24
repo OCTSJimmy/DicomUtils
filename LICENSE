@@ -1,0 +1,33 @@
+DicomUtils / CT-GenAI-DICOM
+
+版权所有 (c) 2026。保留所有权利 (All Rights Reserved)。
+
+---
+
+本项目自有代码（除明确标注的第三方依赖外）未以任何开源许可证授权。
+未经权利人书面许可，不得复制、修改、分发、再许可或用于商业用途。
+
+---
+
+第三方组件声明
+
+本项目包含以下第三方开源组件，各受其原始许可证约束：
+
+1. DCM4CHE (org.dcm4che:dcm4che-core)
+   许可证：Mozilla Public License 1.1 (MPL 1.1) /
+           GNU General Public License 2.0 (GPL 2.0) /
+           GNU Lesser General Public License 2.1 (LGPL 2.1)
+   官方地址：https://www.dcm4che.org
+   说明：用户可任选 MPL / GPL / LGPL 之一适用。对本项目的自有代码
+         不产生 copyleft 传染义务。
+
+2. Kotlin 及 Kotlinx Coroutines
+   许可证：Apache License 2.0
+
+3. Guava (com.google.guava)
+   许可证：Apache License 2.0
+
+4. Apache Commons Compress / IO
+   许可证：Apache License 2.0
+
+使用、修改或分发上述第三方组件时，须遵守其原始许可证条款。
