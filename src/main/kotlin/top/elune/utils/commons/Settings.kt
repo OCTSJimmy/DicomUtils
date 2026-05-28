@@ -40,6 +40,9 @@ class Settings {
         @JvmStatic
         var NEED_SUBJECT_LIST_CSV_PATH: String = ""
 
+        @JvmStatic
+        var NEED_ID_MODE: String = "original"          // original | virtual
+
 
 
 //        @JvmStatic
@@ -164,6 +167,7 @@ class Settings {
                 IS_VALID_SUBJECT_NAME_SIMILARITY =
                     properties.getProperty("IS_VALID_SUBJECT_NAME_SIMILARITY", IS_VALID_SUBJECT_NAME_SIMILARITY.toString()).toBoolean()
                 NEED_SUBJECT_LIST_CSV_PATH = properties.getProperty("NEED_SUBJECT_LIST_CSV_PATH", NEED_SUBJECT_LIST_CSV_PATH)
+                NEED_ID_MODE = properties.getProperty("NEED_ID_MODE", NEED_ID_MODE).lowercase()
 //                SITE_DIR_VALID_REGEX = properties.getProperty("SITE_DIR_VALID_REGEX", SITE_DIR_VALID_REGEX.pattern).toRegex()
                 SUBJECT_DIR_VALID_REGEX =
                     properties.getProperty("SUBJECT_DIR_VALID_REGEX", SUBJECT_DIR_VALID_REGEX.pattern).toRegex()

@@ -104,6 +104,38 @@ class ProcessedResult(
 
 ---
 
+### 4.4 NeedListManager
+
+受试者白名单管理器。读取单列表头 CSV，按 `NEED_ID_MODE` 解析编号列，与 CodeManager 全量编码表取交集，生成有效受试者集合（`effectiveSubjects`）。
+
+```kotlin
+object NeedListManager {
+    fun createList(): List<String>   // 读取 Need CSV，返回编号列表
+}
+```
+
+**CSV 格式**：单列，第一行为表头，后续每行一个编号：
+```
+SubjectNumber
+001-01001
+001-01002
+```
+
+或（`NEED_ID_MODE=virtual`）：
+```
+vSubjectNumber
+C001-P01523
+C001-P01524
+```
+
+**编号模式**：
+- `original`：Need 中的编号为原始受试者编号（`originSubjectNumber`），与 CodeManager 的 `mOriginCodeModuleMap` 取交集
+- `virtual`：Need 中的编号为虚拟受试者编号（`desensitizedSubjectNumber`），与 CodeManager 的 `mDesensitizedCodeModuleMap` 取交集
+
+**正交策略**：交集后的 `effectiveSubjects` 存入 CodeManager 的独立 Map。扫描阶段统一查 effective Map，未命中即 `Ignore`。无 Need 或 Need 无效时，effective 指向 All 的完整引用，扫描层代码路径唯一，无需分支。
+
+---
+
 ## 5. 过滤策略系统
 
 支持从 `program_settings.properties` 动态解析策略树。
@@ -128,6 +160,8 @@ class ProcessedResult(
 | 配置项 | 说明 |
 |--------|------|
 | `VCODE_CSV_FILE_PATH` | 编码映射 CSV 路径 |
+| `NEED_SUBJECT_LIST_CSV_PATH` | Need 受试者白名单 CSV 路径（可选） |
+| `NEED_ID_MODE` | Need 编号模式：`original`（原始编号）或 `virtual`（虚拟编号），默认 `original` |
 | `SRC_DICOM_PATH` | 输入 DICOM 根目录 |
 | `DST_DICOM_PATH` | 主路输出目录 |
 | `DST_DICOM_PATH2` | 辅路输出目录（可为空） |
@@ -176,6 +210,22 @@ class ProcessedResult(
 
 ### 9.4 日期标签保留
 脱敏策略从"全部清空"改为"保留日期/时间标签"，避免下游时间序列分析不可逆丢失信息。
+
+---
+
+### 9.5 受试者白名单（NeedList）正交过滤
+
+**问题**：全部受试者脱敏表中，某次运行只需处理部分受试者。如何在扫描阶段精准过滤，避免无意义的 IOPS 和逻辑复杂性？
+
+**决策**：初始化阶段做正交，扫描阶段零感知。
+
+1. CodeManager 加载全部脱敏表（All）
+2. NeedListManager 读取 Need CSV，按 `NEED_ID_MODE` 解析编号
+3. 与 All 取交集，生成 `effectiveSubjects` Map
+4. 扫描阶段 `CodeManager.INSTANCE[originCode]` 统一查 effective Map
+5. 无 Need 时 effective 即 All 的引用，扫描层代码路径唯一
+
+**统计口径**：不在 effective 中的受试者归入 `Ignore`（非 Error），因为这是配置过滤而非数据错误。
 
 ---
 

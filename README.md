@@ -37,6 +37,11 @@ java -jar release/DicomUtils-4.7-SNAPSHOT.jar
 # 编码映射表（CSV，六列）
 VCODE_CSV_FILE_PATH = /data01/<ProjectDir>/TextFiles/CodeN.csv
 
+# 受试者白名单（可选，单列CSV，第一行为表头）
+NEED_SUBJECT_LIST_CSV_PATH = /data01/<ProjectDir>/TextFiles/NeedList.csv
+# Need 编号模式：original = 原始受试者编号，virtual = 虚拟受试者编号
+NEED_ID_MODE = original
+
 # 输入输出路径
 SRC_DICOM_PATH  = /data01/<ProjectDir>/Images/<DICOM_Origin>
 DST_DICOM_PATH  = /data02/<ProjectDir>/Images/<DICOM_Release>
@@ -53,11 +58,29 @@ SUBJECT_DIR_VALID_REGEX=^.*\/[0-9]{14}_[0-9]{9}_[^\/]*$
 # filter.strategy[0].ignoreCase=true
 ```
 
-CSV 编码映射格式：
+CSV 编码映射格式（六列）：
 
 ```
 原始中心编码,原始受试者编码,原始受试者编号,脱敏中心编码,脱敏受试者编码,脱敏受试者编号
 ```
+
+Need 受试者白名单格式（单列，第一行为表头）：
+
+```csv
+SubjectNumber
+001-01001
+001-01002
+```
+
+或（当 `NEED_ID_MODE=virtual`）：
+
+```csv
+vSubjectNumber
+C001-P01523
+C001-P01524
+```
+
+未配置 `NEED_SUBJECT_LIST_CSV_PATH` 时，自动扫描全部受试者。
 
 ---
 
@@ -81,6 +104,7 @@ Scanner ──taskChannel──→ Processor ──writeChannel──→ Writer
 
 核心特性：
 
+- **受试者白名单**：支持通过 Need CSV 限定本次运行的受试者范围，与全量编码表正交取交集，无 Need 时自动全量扫描
 - **流式处理**：`readDatasetUntilPixelData()` 不加载像素数据，元数据-only 处理
 - **双路写入**：`DualOutputStream` 一次读取同时写入 NTFS + NFS，不缓存完整文件
 - **动态黑名单**：Processor 判定违规 Series 后实时通知 Scanner 丢弃同目录后续文件
@@ -99,8 +123,10 @@ src/main/kotlin/top/elune/utils/
 │   ├── SedaConfig.kt                # 流水线配置
 │   ├── SedaContext.kt               # 运行时上下文（Channel、调度器）
 │   ├── SedaStats.kt                 # 原子统计
-│   ├── CodeManager.kt               # 编码映射表加载
-│   └── CodeModule.kt                # 单条编码映射
+│   ├── CodeManager.kt               # 编码映射表加载（含 effective 正交）
+│   ├── CodeModule.kt                # 单条编码映射
+│   ├── NeedListManager.kt           # 受试者白名单加载
+│   └── NeedCodeModule.kt            # 单条白名单条目
 ├── engine/                          # SEDA 三阶流水线
 │   ├── SedaEngine.kt                # 编排器
 │   ├── SedaScanner.kt               # 扫描器
