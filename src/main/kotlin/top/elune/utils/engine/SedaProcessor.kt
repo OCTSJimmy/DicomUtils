@@ -1,7 +1,12 @@
 package top.elune.utils.engine
 
+import kotlinx.coroutines.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
 import org.dcm4che3.data.Attributes
 import org.dcm4che3.data.Tag
 import org.dcm4che3.data.VR
@@ -16,10 +21,10 @@ import java.util.*
 
 class SedaProcessor(private val ctx: SedaContext) {
 
-    fun start() {
-        // 根据 CPU 核心数启动多个处理协程
+    suspend fun start() = supervisorScope {
+        // 启动 cpuParallelism 个处理 worker，在此 scope 内等待全部完成
         repeat(ctx.config.cpuParallelism) {
-            ctx.engineScope.launch(Dispatchers.Default) {
+            launch(Dispatchers.Default) {
                 processorWorker()
             }
         }

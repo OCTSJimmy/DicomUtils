@@ -3,6 +3,8 @@ package top.elune.utils.engine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.supervisorScope
 import top.elune.utils.commons.SedaContext
 import top.elune.utils.dicom.CustomDicomInputStream
 import top.elune.utils.dicom.CustomDicomOutputStream
@@ -15,7 +17,7 @@ class SedaWriter(private val ctx: SedaContext) {
     private val auditLogChannel = Channel<OriginDicomData>(2000)
 
 
-    fun start() {
+    suspend fun start() = supervisorScope {
         // 启动主分发协程，消费 Processor 产出的成品
         startAuditLogger()
         // ==========================================
@@ -24,11 +26,13 @@ class SedaWriter(private val ctx: SedaContext) {
         // ==========================================
         val workerCount = ctx.config.ntfsWriterParallelism
         LogUtils.info("SedaWriter: 启动 $workerCount 个写入并发器...")
-        repeat(workerCount) { workerId ->
-            ctx.engineScope.launch(ctx.ntfsDispatcher) {
+        val workerJobs = (0 until workerCount).map { workerId ->
+            launch(ctx.ntfsDispatcher) {
                 writerDispatcherLoop(workerId)
             }
         }
+        workerJobs.joinAll()
+        auditLogChannel.close()
     }
 
     private fun startAuditLogger() {

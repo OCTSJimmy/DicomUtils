@@ -1,5 +1,17 @@
 # CT-GenAI-DICOM 更新日志
 
+## [4.7.1-SNAPSHOT] - 2026-06-01
+
+### 🔴 严重问题修复（Critical Fixes）
+
+#### 16. 修复流水线卡死导致进程无法退出与任务丢失
+- **问题描述**：`SedaEngine` 中 `processor.start()` 被外层 `repeat(cpuParallelism)` 包裹，而 `SedaProcessor.start()` 内部又 `repeat(cpuParallelism)` 启动协程，导致 `cpuParallelism²` 个 worker 同时竞争。`SedaProcessor.start()` 是同步函数，不等待内部 worker，因此 `processorJobs.joinAll()` 只等待外层协程，立即返回。随后 `writeChannel.close()` 被过早调用，此时仍在处理 `taskChannel` 中 8025 个剩余任务的 worker 尝试 `send(result)` 时遭遇 `ClosedSendChannelException`，catch 块中再次尝试 `send` 再次崩溃，协程崩溃后任务既未写入也未统计，永久丢失。同时 `SedaWriter.startAuditLogger()` 中的 `auditLogChannel` 从未被关闭，其 `for` 循环永久阻塞，导致 JVM 无法退出，进程在后台僵尸运行。
+- **影响范围**：扫描完成后剩余任务全部丢失，统计面板 `remainingTotal` 长期不变，进程不退出。
+- **修复方式**：
+  - `SedaEngine`：移除外层 `repeat(cpuParallelism)`，仅启动单个协程调用 `processor.start()`；等待对象改为 `processorJob.join()`。
+  - `SedaProcessor`：`start()` 改为 `suspend`，内部使用 `supervisorScope { launch { processorWorker() } }`，确保所有 worker 完成后才返回。
+  - `SedaWriter`：`start()` 改为 `suspend`，内部使用 `supervisorScope` 管理 `writerDispatcherLoop` worker，所有 worker 完成后调用 `auditLogChannel.close()`，使审计日志协程正常退出。
+
 ## [4.7-SNAPSHOT] - 2026-04-22
 
 ### 🔴 严重问题修复（Critical Fixes）

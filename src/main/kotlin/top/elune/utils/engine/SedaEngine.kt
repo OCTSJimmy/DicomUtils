@@ -20,11 +20,9 @@ class SedaEngine(private val ctx: SedaContext) {
                 writer.start()
             }
 
-            // 2. 启动多个 Processor 协程，并保留它们的 Job 引用
-            val processorJobs = (1..ctx.config.cpuParallelism).map {
-                ctx.engineScope.launch(Dispatchers.Default) {
-                    processor.start() // 修改：让 processor 暴露一个消费循环
-                }
+            // 2. 启动 Processor（内部自己管理并发）
+            val processorJob = ctx.engineScope.launch {
+                processor.start()
             }
             val monitorJob = ctx.engineScope.launch {
                 while (isActive) {
@@ -39,7 +37,7 @@ class SedaEngine(private val ctx: SedaContext) {
 
             // 4. 【关键稳定替代】：等待所有 Processor 处理完存量数据并退出
             // 只有当 taskChannel 关闭且所有任务被消费完，processorJobs 才会完成
-            processorJobs.joinAll()
+            processorJob.join()
 
             // 5. 此时确定 Processor 不会再产生新数据，安全关闭 writeChannel
             ctx.writeChannel.close()

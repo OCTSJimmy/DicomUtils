@@ -22,7 +22,7 @@ DICOM 影像批量脱敏与分发工具。基于 Kotlin + DCM4CHE 构建，采�
 ### 运行
 
 ```bash
-java -jar release/DicomUtils-4.7-SNAPSHOT.jar
+java -jar release/DicomUtils-4.7.1-SNAPSHOT.jar
 ```
 
 运行前确保当前目录存在 `program_settings.properties` 配置文件。
@@ -164,7 +164,7 @@ src/main/kotlin/top/elune/utils/
 
 ## 版本
 
-- 当前版本：`4.7-SNAPSHOT`
+- 当前版本：`4.7.1-SNAPSHOT`
 - 变更详情见 [CHANGELOG.md](./CHANGELOG.md)
 
 ---

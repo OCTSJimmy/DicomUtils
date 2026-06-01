@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "top.elune.utils"
-version = "4.7-SNAPSHOT"
+version = "4.7.1-SNAPSHOT"
 
 repositories {
     mavenCentral()

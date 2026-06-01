@@ -1,6 +1,6 @@
 # DicomUtils / CT-GenAI-DICOM 设计文档
 
-> 版本：4.7-SNAPSHOT
+> 版本：4.7.1-SNAPSHOT
 > 最后更新：2026-05-24
 
 ---
