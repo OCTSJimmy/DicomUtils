@@ -74,6 +74,10 @@ class SedaScanner(private val ctx: SedaContext) {
                 }
             }
         } finally {
+            // drain-wait: 等待所有已投递任务被 Processor 领用，防止 close 打断挂起的 send
+            while (ctx.scanQueuePending.get() > 0 && isActive) {
+                kotlinx.coroutines.delay(100)
+            }
             ctx.taskChannel.close()
             LogUtils.info("Scanner 扫描阶段结束，总计下发任务: ${ctx.stats.fileScanned.get()}")
         }
